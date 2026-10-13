@@ -4,8 +4,10 @@ import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.InputAdapter;
+import com.badlogic.gdx.InputMultiplexer;
 import ru.gigabyteartur.weights_of_war.commands.CommandMove;
 import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.OrthographicCamera;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
@@ -14,7 +16,9 @@ import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator.FreeTypeFont
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.Rectangle;
+import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.ScreenUtils;
+import com.badlogic.gdx.utils.viewport.FitViewport;
 import java.io.File;
 import ru.gigabyteartur.weights_of_war.units.BattleUnitCommon;
 import ru.gigabyteartur.weights_of_war.units.UnitArcher;
@@ -30,12 +34,19 @@ public class Main extends ApplicationAdapter {
     private CommandPanel commandPanel;
     private BattleObject selectedUnit;
 
+    private OrthographicCamera camera;
+    private OrthographicCamera uiCamera;
+    private FitViewport viewport;
+    private RtsCameraController cameraController;
+    private final Vector2 tmpWorld = new Vector2();
+
     private BitmapFont font;
     private ShapeRenderer shapeRenderer;
     private Rectangle exitButtonBounds;
     private Rectangle debugButtonBounds;
     private float textX;
     private float textY;
+    private float battleBeginTimer = 0f;
 
     @Override
     public void create() {
@@ -43,6 +54,18 @@ public class Main extends ApplicationAdapter {
         world = new GameWorld();
         world.Init();
         commandPanel = new CommandPanel();
+
+        // Камера мира: OrthographicCamera + letterbox-вьюпорт на всё окно.
+        camera = new OrthographicCamera();
+        viewport = new FitViewport(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), camera);
+        viewport.update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
+        cameraController = new RtsCameraController(camera, viewport);
+        cameraController.setMapBounds(new Rectangle(0, 0, GameWorld.MAP_WIDTH, GameWorld.MAP_HEIGHT));
+        cameraController.centerOn(GameWorld.MAP_WIDTH / 2f, GameWorld.MAP_HEIGHT / 2f);
+
+        // Отдельная экранная камера для UI (панель, кнопки, текст) — не зависит от камеры мира.
+        uiCamera = new OrthographicCamera();
+        uiCamera.setToOrtho(false, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
 
         font = createFont();
         font.getData().setScale(2f);
@@ -72,7 +95,7 @@ public class Main extends ApplicationAdapter {
                 debugButtonWidth,
                 buttonHeight);
 
-        Gdx.input.setInputProcessor(new InputAdapter() {
+        InputAdapter selectionAdapter = new InputAdapter() {
             @Override
             public boolean touchDown(int screenX, int screenY, int pointer, int button) {
                 float y = Gdx.graphics.getHeight() - screenY;
@@ -84,13 +107,19 @@ public class Main extends ApplicationAdapter {
                     GameWorld.setDebugMode(!GameWorld.getDebugMode());
                     return true;
                 }
+                // Клик по командной панели — не область боя.
+                if (screenX < GameWorld.COMMAND_PANEL_WIDTH) {
+                    return true;
+                }
+                // Область боя: преобразуем экранные координаты мыши в мировые.
+                viewport.unproject(tmpWorld.set(screenX, screenY));
                 if (button == Input.Buttons.RIGHT)
                 {
-                    commandSelectedUnit(screenX, y);
-                    return false;
+                    commandSelectedUnit(tmpWorld.x, tmpWorld.y);
+                    return true;
                 }
-                selectUnitAt(screenX, y);
-                return false;
+                selectUnitAt(tmpWorld.x, tmpWorld.y);
+                return true;
             }
 
             @Override
@@ -101,21 +130,29 @@ public class Main extends ApplicationAdapter {
                 }
                 return false;
             }
-        });
+        };
+
+        Gdx.input.setInputProcessor(new InputMultiplexer(cameraController, selectionAdapter));
     }
 
     @Override
     public void render() {
         ScreenUtils.clear(0.15f, 0.15f, 0.2f, 1f);
 
+        float delta = Gdx.graphics.getDeltaTime();
+        battleBeginTimer += delta;
         world.Update();
+        cameraController.update(delta);
 
+        // Мировой слой: рендерим через камеру мира.
+        batch.setProjectionMatrix(camera.combined);
         batch.begin();
         drawGrassBackground(batch);
         world.Show(batch);
         batch.end();
 
-        shapeRenderer.setProjectionMatrix(batch.getProjectionMatrix());
+        // UI-слой: рендерим в экранных координатах поверх мира.
+        shapeRenderer.setProjectionMatrix(uiCamera.combined);
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
 
         // Командная панель слева — рисуется поверх боя.
@@ -137,11 +174,26 @@ public class Main extends ApplicationAdapter {
         shapeRenderer.rect(debugButtonBounds.x, debugButtonBounds.y, debugButtonBounds.width, debugButtonBounds.height);
         shapeRenderer.end();
 
+        batch.setProjectionMatrix(uiCamera.combined);
         batch.begin();
         font.draw(batch, "Exit", textX, textY);
         drawDebugButtonLabel(batch);
         commandPanel.ShowUnitInfo(batch, font, selectedUnit, world);
         batch.end();
+
+        // Сообщение «Battle begin» в начале партии (первые 3 секунды).
+        if (battleBeginTimer < 3f)
+        {
+            String beginText = "Battle begin";
+            GlyphLayout layout = new GlyphLayout();
+            layout.setText(font, beginText);
+            float x = (Gdx.graphics.getWidth() - layout.width) / 2f;
+            float y = Gdx.graphics.getHeight() / 2f;
+
+            batch.begin();
+            font.draw(batch, beginText, x, y);
+            batch.end();
+        }
 
         // Сообщение о победителе при завершении игры.
         if (world.IsGameOver())
@@ -165,6 +217,13 @@ public class Main extends ApplicationAdapter {
             font.draw(batch, winnerText, x, y);
             batch.end();
         }
+    }
+
+    @Override
+    public void resize(int width, int height)
+    {
+        viewport.update(width, height, true);
+        uiCamera.setToOrtho(false, width, height);
     }
 
     // Выделяет объект (юнита или здание) под указателем; снимает выделение с остальных.
@@ -191,13 +250,9 @@ public class Main extends ApplicationAdapter {
         selectedUnit = target;
     }
 
-    // Отправляет выделенного юнита к указанным координатам (правый клик по области боя).
+    // Отправляет выделенного юнита к указанным мировым координатам (правый клик по области боя).
     private void commandSelectedUnit(float x, float y)
     {
-        if (x < GameWorld.COMMAND_PANEL_WIDTH)
-        {
-            return; // клик по командной панели — не область боя.
-        }
         if (selectedUnit instanceof BattleUnitCommon && !selectedUnit.IsDead())
         {
             BattleUnitCommon unit = (BattleUnitCommon) selectedUnit;
@@ -231,15 +286,18 @@ public class Main extends ApplicationAdapter {
         font.getData().setScale(prevScaleX, prevScaleY);
     }
 
-    // Заполняет фон плитками текстуры травы.
+    // Заполняет фон плитками текстуры травы по видимой области мира.
     private void drawGrassBackground(SpriteBatch batch) {
         Texture grass = TextureCache.GetTexture("grass.jpg");
-        int screenWidth = Gdx.graphics.getWidth();
-        int screenHeight = Gdx.graphics.getHeight();
+        Rectangle visible = new Rectangle();
+        cameraController.getVisibleWorldRect(visible);
+
+        int startX = (int) Math.floor(visible.x / grass.getWidth()) * grass.getWidth();
+        int startY = (int) Math.floor(visible.y / grass.getHeight()) * grass.getHeight();
 
         batch.setColor(Color.WHITE);
-        for (int x = 0; x < screenWidth; x += grass.getWidth()) {
-            for (int y = 0; y < screenHeight; y += grass.getHeight()) {
+        for (int x = startX; x < visible.x + visible.width; x += grass.getWidth()) {
+            for (int y = startY; y < visible.y + visible.height; y += grass.getHeight()) {
                 batch.draw(grass, x, y);
             }
         }

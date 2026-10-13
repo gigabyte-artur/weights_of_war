@@ -27,6 +27,8 @@ import java.util.Date;
 public class GameWorld {
 
     public final static int COMMAND_PANEL_WIDTH = 300;                      // Ширина командной панели слева, px.
+    public final static int MAP_WIDTH = 4000;                               // Ширина игрового мира (поле боя), мировые единицы.
+    public final static int MAP_HEIGHT = 4000;                              // Высота игрового мира (поле боя), мировые единицы.
     public final static float FOG_UPDATE_INTERVAL = 0.1f;                   // Период обновления тумана войны, сек.
     public final static float NEURO_LOG_INTERVAL = 10f;                     // Период логирования нейросети, сек.
 
@@ -121,13 +123,11 @@ public class GameWorld {
     public void Init()
     {
         // Инициализация.
-        int screenHeight = Gdx.graphics.getHeight();
-        int screenWidth = Gdx.graphics.getWidth();
-        // Границы мира: поле битвы занимает весь экран справа от командной панели.
-        worldLeft = COMMAND_PANEL_WIDTH;
+        // Границы мира: поле битвы — фиксированная карта MAP_WIDTH x MAP_HEIGHT, не привязанная к экрану.
+        worldLeft = 0;
         worldBottom = 0;
-        worldRight = screenWidth;
-        worldTop = screenHeight;
+        worldRight = MAP_WIDTH;
+        worldTop = MAP_HEIGHT;
         // Скорость игры.
         setGameSpeed(2);
         // Фракции.
@@ -135,20 +135,20 @@ public class GameWorld {
         Fraction blueFraction = new Fraction("Blue", Color.BLUE);
         Fraction yellowFraction = new Fraction("Yellow", Color.YELLOW);
         Fraction greenFraction = new Fraction("Green", Color.FOREST);
-        // Ядро красной фракции в правом верхнем углу.
-        BuildingCore redCore = new BuildingCore(screenWidth - BuildingCore.DEFAULT_WIDTH, screenHeight - BuildingCore.DEFAULT_HEIGHT);
+        // Ядро красной фракции в правом верхнем углу карты.
+        BuildingCore redCore = new BuildingCore(MAP_WIDTH - BuildingCore.DEFAULT_WIDTH, MAP_HEIGHT - BuildingCore.DEFAULT_HEIGHT);
         redCore.setFraction(redFraction);
         units.add(redCore);
-        // Ядро синей фракции в левом нижнем углу (справа от командной панели).
-        BuildingCore blueCore = new BuildingCore(COMMAND_PANEL_WIDTH, BuildingCore.DEFAULT_WIDTH);
+        // Ядро синей фракции в левом нижнем углу карты.
+        BuildingCore blueCore = new BuildingCore(0, 0);
         blueCore.setFraction(blueFraction);
         units.add(blueCore);
-        // Ядро желтой фракции в правом нижнем углу.
-        BuildingCore yellowCore = new BuildingCore(screenWidth - BuildingCore.DEFAULT_WIDTH, BuildingCore.DEFAULT_WIDTH);
+        // Ядро желтой фракции в правом нижнем углу карты.
+        BuildingCore yellowCore = new BuildingCore(MAP_WIDTH - BuildingCore.DEFAULT_WIDTH, 0);
         yellowCore.setFraction(yellowFraction);
         units.add(yellowCore);
-        // Ядро зелёной фракции в левом верхнем углу (справа от командной панели).
-        BuildingCore greenCore = new BuildingCore(COMMAND_PANEL_WIDTH, screenHeight - BuildingCore.DEFAULT_HEIGHT);
+        // Ядро зелёной фракции в левом верхнем углу карты.
+        BuildingCore greenCore = new BuildingCore(0, MAP_HEIGHT - BuildingCore.DEFAULT_HEIGHT);
         greenCore.setFraction(greenFraction);
         units.add(greenCore);
         // Сторожевые башни: по одной на фракцию, по диагонали от ядра в сторону центра карты.
@@ -165,8 +165,8 @@ public class GameWorld {
     // Размещает сторожевую башню фракции по диагонали от ядра в сторону центра карты.
     private void PlaceTower(BuildingCore core, Fraction fraction)
     {
-        int centerX = (COMMAND_PANEL_WIDTH + Gdx.graphics.getWidth()) / 2;
-        int centerY = Gdx.graphics.getHeight() / 2;
+        int centerX = (worldLeft + worldRight) / 2;
+        int centerY = (worldBottom + worldTop) / 2;
 
         int coreCenterX = core.getX() + core.getWidth() / 2;
         int coreCenterY = core.getY() + core.getHeight() / 2;

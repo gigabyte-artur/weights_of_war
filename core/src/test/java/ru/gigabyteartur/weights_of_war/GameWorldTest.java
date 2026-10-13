@@ -392,4 +392,32 @@ public class GameWorldTest extends HeadlessGdxTest
         TestUnit b = new TestUnit(3, 4);
         assertEquals(25f, a.GetDistanceSquared(b), 0.001f);
     }
+
+    @Test
+    public void initSetsFixedMapBoundsAndPlacesCoresInCorners()
+    {
+        world.Init();
+
+        // Границы мира — фиксированная карта, не привязанная к экрану.
+        assertEquals(0, world.getWorldLeft());
+        assertEquals(0, world.getWorldBottom());
+        assertEquals(GameWorld.MAP_WIDTH, world.getWorldRight());
+        assertEquals(GameWorld.MAP_HEIGHT, world.getWorldTop());
+
+        // Четыре ядра фракций размещены в углах карты.
+        int coreCount = 0;
+        for (PlacedObject object : world.GetUnits())
+        {
+            if (object instanceof BuildingCore && !object.IsDead())
+            {
+                coreCount++;
+                // Ядра должны находиться в пределах карты.
+                assertTrue(object.getX() >= 0);
+                assertTrue(object.getY() >= 0);
+                assertTrue(object.getX() + object.getWidth() <= GameWorld.MAP_WIDTH);
+                assertTrue(object.getY() + object.getHeight() <= GameWorld.MAP_HEIGHT);
+            }
+        }
+        assertEquals(4, coreCount);
+    }
 }

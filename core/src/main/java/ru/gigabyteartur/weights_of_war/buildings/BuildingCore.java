@@ -285,8 +285,8 @@ public class BuildingCore extends BattleBuildingCommon
     {
         double angle = random.nextDouble() * 2.0 * Math.PI;
         double radius = CENTER_SPAWN_RADIUS * Math.sqrt(random.nextDouble());
-        int centerX = (GameWorld.COMMAND_PANEL_WIDTH + Gdx.graphics.getWidth()) / 2;
-        int centerY = Gdx.graphics.getHeight() / 2;
+        int centerX = (world.getWorldLeft() + world.getWorldRight()) / 2;
+        int centerY = (world.getWorldBottom() + world.getWorldTop()) / 2;
         int spawnX = centerX + (int) Math.round(radius * Math.cos(angle));
         int spawnY = centerY + (int) Math.round(radius * Math.sin(angle));
         return world.FindFreePosition(spawnX, spawnY, width, height);
