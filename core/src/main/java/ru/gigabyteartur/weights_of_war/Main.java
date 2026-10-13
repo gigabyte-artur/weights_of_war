@@ -76,11 +76,14 @@ public class Main extends ApplicationAdapter {
 
         float buttonWidth = 140f;
         float buttonHeight = 45f;
-        float margin = 15f;
-        // Кнопка Exit на командной панели слева (по центру, вверху).
+        // Мини-карта рисуется в самом верху панели; кнопки Exit и «Отладка» выводятся
+        // под ней, чтобы не залезать на мини-карту.
+        float belowMinimapTop = CommandPanel.GetBelowMinimapTop();
+
+        // Кнопка Exit на командной панели слева (по центру, сразу под мини-картой).
         exitButtonBounds = new Rectangle(
                 (GameWorld.COMMAND_PANEL_WIDTH - buttonWidth) / 2f,
-                Gdx.graphics.getHeight() - buttonHeight - margin,
+                belowMinimapTop - buttonHeight,
                 buttonWidth,
                 buttonHeight);
 

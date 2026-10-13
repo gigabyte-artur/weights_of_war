@@ -24,7 +24,15 @@ import ru.gigabyteartur.weights_of_war.units.UnitSwordman;
 public class CommandPanel
 {
     public final static int MINIMAP_SIZE = 250;                             // Размер мини-карты (квадрат), px.
-    private final static float MINIMAP_MARGIN = 10f;                        // Отступ мини-карты от краёв панели, px.
+    public final static float MINIMAP_MARGIN = 10f;                         // Отступ мини-карты от краёв панели, px.
+    public final static float BUTTONS_BLOCK_HEIGHT = 160f;                  // Высота блока кнопок Exit и «Отладка» под мини-картой, px.
+
+    // Y-координата верха области под мини-картой: кнопки и информация о выбранном
+    // объекте выводятся ниже этой границы, чтобы не залезать на мини-карту.
+    public static float GetBelowMinimapTop()
+    {
+        return Gdx.graphics.getHeight() - MINIMAP_SIZE - MINIMAP_MARGIN * 2f;
+    }
 
     // Отрисовывает фон командной панели в её области экрана (мир там не рисуется).
     public void Show(ShapeRenderer shapeRenderer)
@@ -112,7 +120,9 @@ public class CommandPanel
 
         float x = 15f;
         float lineHeight = 22f;
-        float y = Gdx.graphics.getHeight() - 130f;
+        // Выводим информацию под мини-картой, ниже блока кнопок Exit и «Отладка»,
+        // чтобы текст не залезал на мини-карту.
+        float y = GetBelowMinimapTop() - BUTTONS_BLOCK_HEIGHT;
 
         if (selected instanceof BuildingCore)
         {
