@@ -109,6 +109,13 @@ public class Main extends ApplicationAdapter {
                 }
                 // Клик по командной панели — не область боя.
                 if (screenX < GameWorld.COMMAND_PANEL_WIDTH) {
+                    // Клик по мини-карте: центрируем камеру мира на выбранной точке.
+                    Rectangle minimap = commandPanel.GetMinimapBounds();
+                    if (minimap.contains(screenX, y)) {
+                        float worldX = (screenX - minimap.x) / minimap.width * GameWorld.MAP_WIDTH;
+                        float worldY = (minimap.y + minimap.height - y) / minimap.height * GameWorld.MAP_HEIGHT;
+                        cameraController.centerOn(worldX, worldY);
+                    }
                     return true;
                 }
                 // Область боя: преобразуем экранные координаты мыши в мировые.
@@ -157,6 +164,9 @@ public class Main extends ApplicationAdapter {
 
         // Командная панель слева — рисуется поверх боя.
         commandPanel.Show(shapeRenderer);
+
+        // Мини-карта 250x250 в верхней части командной панели.
+        commandPanel.ShowMinimap(shapeRenderer, world);
 
         // Кнопка выхода.
         shapeRenderer.setColor(0.2f, 0.2f, 0.2f, 0.9f);
