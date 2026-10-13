@@ -68,10 +68,18 @@ public final class RtsCameraController extends InputAdapter
     {
         viewportOffsetX = Math.min(panelWidth, Math.max(0, screenWidth - 1));
         int worldWidth = Math.max(1, screenWidth - viewportOffsetX);
+        // Виртуальные размеры вьюпорта ставим равными размеру области мира в пикселях:
+        // тогда масштаб FitViewport равен 1 и каждая единица камеры соответствует одному
+        // пикселу экрана. Иначе (как при виртуальных размерах всего окна) из-за letterbox
+        // по горизонтали мировые координаты растягиваются/сжимаются неравномерно —
+        // объекты выглядят «вытянутыми по вертикали», а unproject путает оси.
+        camera.viewportWidth = worldWidth;
+        camera.viewportHeight = screenHeight;
         viewport.update(worldWidth, screenHeight, false);
         // Смещаем вьюпорт вправо: пиксели под панелью (x < panelWidth) миром не занимают.
         viewport.setScreenBounds(viewportOffsetX, 0, worldWidth, screenHeight);
-        viewport.apply(true);
+        // Не трогаем GL-состояние здесь: Main.render() сам вызывает viewport.apply(false)
+        // перед отрисовкой мира; лишние apply из обработчиков ввода ломали проекцию.
 
         // После изменения размеров вьюпорта мировые границы видимой области смещаются —
         // прижимаем камеру к карте и центрируем её в новой видимой области.
@@ -162,17 +170,28 @@ public final class RtsCameraController extends InputAdapter
     // Учитывает смещённую область просмотра: мир рисуется только справа от командной панели.
     public Vector2 unprojectScreenPoint(float screenX, float screenY)
     {
-        toGlCoords(screenX, screenY, tmpVec3);
+        toViewportNdc(screenX, screenY, tmpVec3);
         camera.unproject(tmpVec3);
         return tmpBefore.set(tmpVec3.x, tmpVec3.y);
     }
 
-    // Переводит экранные координаты мыши (верхний левый угол — начало отсчёта, Y вниз)
-    // в GL-координаты окна (нижний левый угол — начало отсчёта, Y вверх).
-    private void toGlCoords(float screenX, float screenY, Vector3 out)
+    // Переводит экранные координаты мыши (верхний левый угол окна — начало отсчёта, Y вниз)
+    // в NDC-координаты (-1..1) ОБЛАСТИ ПРОСМОТРА МИРА.
+    // Обязательно учитывается реальный прямоугольник вьюпорта (setScreenBounds):
+    // после смещения области просмотра влево на ширину командной панели её левый край
+    // находится не на x = 0, поэтому прямое camera.unproject без этой коррекции давал
+    // неверные мировые координаты клика (юниты не выделялись), а игнорирование
+    // соотношения сторон при вычислении NDC по вертикали приводило к «вытягиванию»
+    // объектов и рассогласованию осей X/Y.
+    private void toViewportNdc(float screenX, float screenY, Vector3 out)
     {
-        int screenHeight = Gdx.graphics.getHeight();
-        out.set(screenX, screenHeight - screenY, 0f);
+        int winW = Gdx.graphics.getWidth();
+        int winH = Gdx.graphics.getHeight();
+        float glX = screenX;                  // GL: Y снизу вверх, X тот же
+        float glY = winH - screenY;
+        float relX = (glX - viewport.getScreenX()) / Math.max(1, viewport.getScreenWidth());
+        float relY = (glY - viewport.getScreenY()) / Math.max(1, viewport.getScreenHeight());
+        out.set(relX * 2f - 1f, relY * 2f - 1f, 0f);
     }
 
     // Зум к курсору: world-точка под экранными координатами (screenX, screenY) остаётся
@@ -184,7 +203,7 @@ public final class RtsCameraController extends InputAdapter
             return;
         }
 
-        toGlCoords(screenX, screenY, tmpVec3);
+        toViewportNdc(screenX, screenY, tmpVec3);
         camera.unproject(tmpVec3);
         // Вектор от центра камеры до точки под курсором (в мировых единицах).
         float dx = tmpVec3.x - camera.position.x;
