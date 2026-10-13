@@ -7,12 +7,13 @@ import com.badlogic.gdx.graphics.OrthographicCamera;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.math.Vector2;
+import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.viewport.Viewport;
 
 // Контроллер камеры в стиле 2D RTS: управляет OrthographicCamera, панорамирует мир
 // клавишами WASD и приближает/удаляет взгляд колёсиком мыши к курсору.
 // Работает только с мировыми координатами; экранные координаты преобразуются через
-// viewport.unproject(...) (корректно для letterbox-вьюпорта).
+// viewport.apply(...) + camera.unproject(...) (корректно для смещённого вьюпорта).
 public final class RtsCameraController extends InputAdapter
 {
     public float minZoom;
@@ -28,6 +29,10 @@ public final class RtsCameraController extends InputAdapter
     private final OrthographicCamera camera;
     private final Viewport viewport;
 
+    // Смещение области просмотра по X в пикселях: мир рисуется справа от командной панели,
+    // а не под ней. Обновляется при resize() из Main.
+    private int viewportOffsetX;
+
     private Rectangle mapBounds;      // Границы карты; null — без ограничений.
     private CameraTarget followTarget; // Цель слежения (заглушка на первом этапе).
     private boolean uiHovered;         // Курсор над UI (заглушка для edge/drag pan).
@@ -38,7 +43,8 @@ public final class RtsCameraController extends InputAdapter
     private boolean panRight;
 
     private final Vector2 tmpBefore = new Vector2();
-    private final Vector2 tmpAfter = new Vector2();
+    private final Vector3 tmpVec3 = new Vector3();
+    private final Rectangle tmpVisibleRect = new Rectangle();
 
     public RtsCameraController(OrthographicCamera camera, Viewport viewport)
     {
@@ -54,6 +60,30 @@ public final class RtsCameraController extends InputAdapter
         edgeScrollingEnabled = true;
         keyScrollingEnabled = true;
         dragPanningEnabled = true;
+    }
+
+    // Пересоздаёт область просмотра мира: она занимает только свободную от командной панели
+    // часть экрана (справа от неё), чтобы панель не перекрывала мир.
+    public void updateViewport(int screenWidth, int screenHeight, int panelWidth)
+    {
+        viewportOffsetX = Math.min(panelWidth, Math.max(0, screenWidth - 1));
+        int worldWidth = Math.max(1, screenWidth - viewportOffsetX);
+        viewport.update(worldWidth, screenHeight, false);
+        // Смещаем вьюпорт вправо: пиксели под панелью (x < panelWidth) миром не занимают.
+        viewport.setScreenBounds(viewportOffsetX, 0, worldWidth, screenHeight);
+        viewport.apply(true);
+
+        // После изменения размеров вьюпорта мировые границы видимой области смещаются —
+        // прижимаем камеру к карте и центрируем её в новой видимой области.
+        clampToMapBounds();
+        if (mapBounds != null)
+        {
+            Rectangle visible = getVisibleWorldRect(tmpVisibleRect);
+            camera.position.x = mapBounds.x + mapBounds.width * 0.5f;
+            camera.position.y = visible.y + visible.height * 0.5f;
+            clampToMapBounds();
+        }
+        camera.update();
     }
 
     // Обновляет камеру: применяет панорамирование зажатыми клавишами и прижимает её к границам карты.
@@ -128,6 +158,17 @@ public final class RtsCameraController extends InputAdapter
                 halfHeight * 2f);
     }
 
+    // Преобразует экранные координаты (Gdx.input, Y сверху вниз) в мировые.
+    // Учитывает смещённую область просмотра: мир рисуется только справа от командной панели.
+    public Vector2 unprojectScreenPoint(float screenX, float screenY)
+    {
+        viewport.apply(false);
+        int screenHeight = Gdx.graphics.getHeight();
+        tmpVec3.set(screenX, screenHeight - screenY, 0f);
+        camera.unproject(tmpVec3);
+        return tmpBefore.set(tmpVec3.x, tmpVec3.y);
+    }
+
     // Зум к курсору: world-точка под экранными координатами (screenX, screenY) остаётся
     // на месте. amount > 0 — приближение, amount < 0 — удаление.
     public void zoomAt(float screenX, float screenY, float amount)
@@ -137,15 +178,24 @@ public final class RtsCameraController extends InputAdapter
             return;
         }
 
-        Vector2 before = viewport.unproject(tmpBefore.set(screenX, screenY));
+        viewport.apply(false);
+        int screenHeight = Gdx.graphics.getHeight();
+        tmpVec3.set(screenX, screenHeight - screenY, 0f);
+        camera.unproject(tmpVec3);
+        // Вектор от центра камеры до точки под курсором (в мировых единицах).
+        float dx = tmpVec3.x - camera.position.x;
+        float dy = tmpVec3.y - camera.position.y;
 
         float scale = (float) Math.pow(zoomFactor, -amount);
-        camera.zoom = MathUtils.clamp(camera.zoom * scale, minZoom, maxZoom);
+        float newZoom = MathUtils.clamp(camera.zoom * scale, minZoom, maxZoom);
+        float ratio = newZoom / camera.zoom; // отношение нового зума к старому
+        camera.zoom = newZoom;
         camera.update();
 
-        Vector2 after = viewport.unproject(tmpAfter.set(screenX, screenY));
-        camera.position.x += before.x - after.x;
-        camera.position.y += before.y - after.y;
+        // Точка под курсором должна остаться на месте: вектор до неё
+        // сжимается/растягивается пропорционально зуму.
+        camera.position.x += dx * (1f - ratio);
+        camera.position.y += dy * (1f - ratio);
 
         clampToMapBounds();
         camera.update();

@@ -19,13 +19,14 @@ import ru.gigabyteartur.weights_of_war.units.UnitScout;
 import ru.gigabyteartur.weights_of_war.units.UnitShieldman;
 import ru.gigabyteartur.weights_of_war.units.UnitSwordman;
 
-// Командная панель слева: рисуется поверх боя.
+// Командная панель слева: занимает область экрана, свободную от мира
+// (область просмотра мира смещена вправо на COMMAND_PANEL_WIDTH, см. RtsCameraController).
 public class CommandPanel
 {
     public final static int MINIMAP_SIZE = 250;                             // Размер мини-карты (квадрат), px.
     private final static float MINIMAP_MARGIN = 10f;                        // Отступ мини-карты от краёв панели, px.
 
-    // Отрисовывает командную панель поверх игрового мира.
+    // Отрисовывает фон командной панели в её области экрана (мир там не рисуется).
     public void Show(ShapeRenderer shapeRenderer)
     {
         shapeRenderer.setColor(0.12f, 0.12f, 0.18f, 1f);
