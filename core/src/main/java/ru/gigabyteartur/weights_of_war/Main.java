@@ -115,11 +115,9 @@ public class Main extends ApplicationAdapter {
                 // Клик по командной панели — не область боя.
                 if (screenX < GameWorld.COMMAND_PANEL_WIDTH) {
                     // Клик по мини-карте: центрируем камеру мира на выбранной точке.
-                    Rectangle minimap = commandPanel.GetMinimapBounds();
-                    if (minimap.contains(screenX, y)) {
-                        float worldX = (screenX - minimap.x) / minimap.width * GameWorld.MAP_WIDTH;
-                        float worldY = (minimap.y + minimap.height - y) / minimap.height * GameWorld.MAP_HEIGHT;
-                        cameraController.centerOn(worldX, worldY);
+                    Vector2 minimapPoint = commandPanel.GetMiniMap().ScreenClickToWorld(screenX, (int) y);
+                    if (minimapPoint != null) {
+                        cameraController.centerOn(minimapPoint.x, minimapPoint.y);
                     }
                     return true;
                 }
