@@ -162,11 +162,17 @@ public final class RtsCameraController extends InputAdapter
     // Учитывает смещённую область просмотра: мир рисуется только справа от командной панели.
     public Vector2 unprojectScreenPoint(float screenX, float screenY)
     {
-        viewport.apply(false);
-        int screenHeight = Gdx.graphics.getHeight();
-        tmpVec3.set(screenX, screenHeight - screenY, 0f);
+        toGlCoords(screenX, screenY, tmpVec3);
         camera.unproject(tmpVec3);
         return tmpBefore.set(tmpVec3.x, tmpVec3.y);
+    }
+
+    // Переводит экранные координаты мыши (верхний левый угол — начало отсчёта, Y вниз)
+    // в GL-координаты окна (нижний левый угол — начало отсчёта, Y вверх).
+    private void toGlCoords(float screenX, float screenY, Vector3 out)
+    {
+        int screenHeight = Gdx.graphics.getHeight();
+        out.set(screenX, screenHeight - screenY, 0f);
     }
 
     // Зум к курсору: world-точка под экранными координатами (screenX, screenY) остаётся
@@ -178,9 +184,7 @@ public final class RtsCameraController extends InputAdapter
             return;
         }
 
-        viewport.apply(false);
-        int screenHeight = Gdx.graphics.getHeight();
-        tmpVec3.set(screenX, screenHeight - screenY, 0f);
+        toGlCoords(screenX, screenY, tmpVec3);
         camera.unproject(tmpVec3);
         // Вектор от центра камеры до точки под курсором (в мировых единицах).
         float dx = tmpVec3.x - camera.position.x;
