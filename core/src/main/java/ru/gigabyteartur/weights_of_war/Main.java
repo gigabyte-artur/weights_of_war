@@ -55,12 +55,14 @@ public class Main extends ApplicationAdapter {
         world.Init();
         commandPanel = new CommandPanel();
 
-        // Камера мира: OrthographicCamera + letterbox-вьюпорт на всё окно.
+        // Камера мира: OrthographicCamera + вьюпорт, занимающий только свободную от
+        // командной панели область экрана (справа от неё).
         camera = new OrthographicCamera();
         viewport = new FitViewport(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), camera);
-        viewport.update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
         cameraController = new RtsCameraController(camera, viewport);
         cameraController.setMapBounds(new Rectangle(0, 0, GameWorld.MAP_WIDTH, GameWorld.MAP_HEIGHT));
+        cameraController.updateViewport(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(),
+                GameWorld.COMMAND_PANEL_WIDTH);
         cameraController.centerOn(GameWorld.MAP_WIDTH / 2f, GameWorld.MAP_HEIGHT / 2f);
 
         // Отдельная экранная камера для UI (панель, кнопки, текст) — не зависит от камеры мира.
@@ -118,8 +120,10 @@ public class Main extends ApplicationAdapter {
                     }
                     return true;
                 }
-                // Область боя: преобразуем экранные координаты мыши в мировые.
-                viewport.unproject(tmpWorld.set(screenX, screenY));
+                // Область боя: преобразуем экранные координаты мыши в мировые
+                // (с учётом смещённой области просмотра — мир не рисуется под панелью).
+                Vector2 worldPoint = cameraController.unprojectScreenPoint(screenX, screenY);
+                tmpWorld.set(worldPoint);
                 if (button == Input.Buttons.RIGHT)
                 {
                     commandSelectedUnit(tmpWorld.x, tmpWorld.y);
@@ -151,18 +155,20 @@ public class Main extends ApplicationAdapter {
         world.Update();
         cameraController.update(delta);
 
-        // Мировой слой: рендерим через камеру мира.
+        // Мировой слой: рендерим через камеру мира только в свободной от панели области экрана.
+        viewport.apply(false);
         batch.setProjectionMatrix(camera.combined);
         batch.begin();
         drawGrassBackground(batch);
         world.Show(batch);
         batch.end();
+        Gdx.gl.glViewport(0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
 
         // UI-слой: рендерим в экранных координатах поверх мира.
         shapeRenderer.setProjectionMatrix(uiCamera.combined);
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
 
-        // Командная панель слева — рисуется поверх боя.
+        // Командная панель слева — занимает свою область экрана (мир под неё не попадает).
         commandPanel.Show(shapeRenderer);
 
         // Мини-карта 250x250 в верхней части командной панели.
@@ -232,7 +238,8 @@ public class Main extends ApplicationAdapter {
     @Override
     public void resize(int width, int height)
     {
-        viewport.update(width, height, true);
+        // Мир занимает только область справа от командной панели.
+        cameraController.updateViewport(width, height, GameWorld.COMMAND_PANEL_WIDTH);
         uiCamera.setToOrtho(false, width, height);
     }
 
