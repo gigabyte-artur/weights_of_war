@@ -1,11 +1,9 @@
 package ru.gigabyteartur.weights_of_war;
 
 import com.badlogic.gdx.Gdx;
-import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
-import com.badlogic.gdx.math.Rectangle;
 import java.util.ArrayList;
 import ru.gigabyteartur.weights_of_war.buildings.BattleBuildingCommon;
 import ru.gigabyteartur.weights_of_war.buildings.BuildingCore;
@@ -23,15 +21,15 @@ import ru.gigabyteartur.weights_of_war.units.UnitSwordman;
 // (область просмотра мира смещена вправо на COMMAND_PANEL_WIDTH, см. RtsCameraController).
 public class CommandPanel
 {
-    public final static int MINIMAP_SIZE = 250;                             // Размер мини-карты (квадрат), px.
-    public final static float MINIMAP_MARGIN = 10f;                         // Отступ мини-карты от краёв панели, px.
     public final static float BUTTONS_BLOCK_HEIGHT = 160f;                  // Высота блока кнопок Exit и «Отладка» под мини-картой, px.
+
+    private final MiniMap miniMap = new MiniMap();                          // Мини-карта в верхней части панели.
 
     // Y-координата верха области под мини-картой: кнопки и информация о выбранном
     // объекте выводятся ниже этой границы, чтобы не залезать на мини-карту.
     public static float GetBelowMinimapTop()
     {
-        return Gdx.graphics.getHeight() - MINIMAP_SIZE - MINIMAP_MARGIN * 2f;
+        return MiniMap.GetBelowTop();
     }
 
     // Отрисовывает фон командной панели в её области экрана (мир там не рисуется).
@@ -41,68 +39,16 @@ public class CommandPanel
         shapeRenderer.rect(0, 0, GameWorld.COMMAND_PANEL_WIDTH, Gdx.graphics.getHeight());
     }
 
-    // Прямоугольник мини-карты в экранных координатах (верх командной панели).
-    public Rectangle GetMinimapBounds()
+    // Мини-карта командной панели (отриска и обработка кликов).
+    public MiniMap GetMiniMap()
     {
-        float x = (GameWorld.COMMAND_PANEL_WIDTH - MINIMAP_SIZE) / 2f;
-        float y = Gdx.graphics.getHeight() - MINIMAP_MARGIN - MINIMAP_SIZE;
-        return new Rectangle(x, y, MINIMAP_SIZE, MINIMAP_SIZE);
+        return miniMap;
     }
 
     // Мини-карта в верхней части панели: юниты — одна точка, строения — четыре точки, цвет по фракции.
     public void ShowMinimap(ShapeRenderer shapeRenderer, GameWorld world)
     {
-        Rectangle bounds = GetMinimapBounds();
-
-        // Фон и рамка мини-карты.
-        shapeRenderer.setColor(0.05f, 0.05f, 0.08f, 1f);
-        shapeRenderer.rect(bounds.x, bounds.y, bounds.width, bounds.height);
-        shapeRenderer.setColor(0.4f, 0.4f, 0.5f, 1f);
-        shapeRenderer.rectLine(bounds.x, bounds.y, bounds.x + bounds.width, bounds.y, 2f);
-        shapeRenderer.rectLine(bounds.x, bounds.y + bounds.height, bounds.x + bounds.width, bounds.y + bounds.height, 2f);
-        shapeRenderer.rectLine(bounds.x, bounds.y, bounds.x, bounds.y + bounds.height, 2f);
-        shapeRenderer.rectLine(bounds.x + bounds.width, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height, 2f);
-
-        float pointSize = 3f;       // Размер одной точки на мини-карте, px.
-        float gap = 1f;             // Зазор между точками строения, px.
-
-        for (PlacedObject object : world.GetUnits())
-        {
-            if (object.IsDead() || !(object instanceof BattleObject))
-            {
-                continue;
-            }
-
-            BattleObject battleObject = (BattleObject) object;
-
-            // Мировые координаты центра объекта -> экранные координаты на мини-карте (ось Y инвертирована).
-            float mapX = bounds.x + (object.getX() + object.getWidth() / 2f) / GameWorld.MAP_WIDTH * bounds.width;
-            float mapY = bounds.y + bounds.height - (object.getY() + object.getHeight() / 2f) / GameWorld.MAP_HEIGHT * bounds.height;
-
-            if (battleObject.getFraction() != null)
-            {
-                shapeRenderer.setColor(battleObject.getFraction().getColor());
-            }
-            else
-            {
-                shapeRenderer.setColor(Color.WHITE);
-            }
-
-            if (object instanceof BattleBuildingCommon)
-            {
-                // Строение отображается четырьмя точками (квадратом 2x2).
-                float step = pointSize + gap;
-                shapeRenderer.rect(mapX - step, mapY - step, pointSize, pointSize);
-                shapeRenderer.rect(mapX + gap, mapY - step, pointSize, pointSize);
-                shapeRenderer.rect(mapX - step, mapY + gap, pointSize, pointSize);
-                shapeRenderer.rect(mapX + gap, mapY + gap, pointSize, pointSize);
-            }
-            else
-            {
-                // Юнит отображается одной точкой.
-                shapeRenderer.rect(mapX - pointSize / 2f, mapY - pointSize / 2f, pointSize, pointSize);
-            }
-        }
+        miniMap.Show(shapeRenderer, world);
     }
 
     // Отображает на панели информацию о выделенном объекте.
