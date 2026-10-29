@@ -39,6 +39,7 @@ public class Main extends ApplicationAdapter {
     private FitViewport viewport;
     private RtsCameraController cameraController;
     private final Vector2 tmpWorld = new Vector2();
+    private final Rectangle minimapVisibleWorld = new Rectangle();          // Видимая камере область мира для рамки на мини-карте.
 
     private BitmapFont font;
     private ShapeRenderer shapeRenderer;
@@ -173,7 +174,8 @@ public class Main extends ApplicationAdapter {
         commandPanel.Show(shapeRenderer);
 
         // Мини-карта 250x250 в верхней части командной панели.
-        commandPanel.ShowMinimap(shapeRenderer, world);
+        cameraController.getVisibleWorldRect(minimapVisibleWorld);
+        commandPanel.ShowMinimap(shapeRenderer, world, minimapVisibleWorld);
 
         // Кнопка выхода.
         shapeRenderer.setColor(0.2f, 0.2f, 0.2f, 0.9f);

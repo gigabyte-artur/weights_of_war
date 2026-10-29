@@ -4,6 +4,7 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
+import com.badlogic.gdx.math.Rectangle;
 import java.util.ArrayList;
 import ru.gigabyteartur.weights_of_war.buildings.BattleBuildingCommon;
 import ru.gigabyteartur.weights_of_war.buildings.BuildingCore;
@@ -46,9 +47,9 @@ public class CommandPanel
     }
 
     // Мини-карта в верхней части панели: юниты — одна точка, строения — четыре точки, цвет по фракции.
-    public void ShowMinimap(ShapeRenderer shapeRenderer, GameWorld world)
+    public void ShowMinimap(ShapeRenderer shapeRenderer, GameWorld world, Rectangle visibleWorld)
     {
-        miniMap.Show(shapeRenderer, world);
+        miniMap.Show(shapeRenderer, world, visibleWorld);
     }
 
     // Отображает на панели информацию о выделенном объекте.

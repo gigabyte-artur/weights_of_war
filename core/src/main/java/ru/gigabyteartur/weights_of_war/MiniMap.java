@@ -8,7 +8,8 @@ import com.badlogic.gdx.math.Vector2;
 import ru.gigabyteartur.weights_of_war.buildings.BattleBuildingCommon;
 
 // Мини-карта командной панели: занимает верхнюю область панели, отображает все
-// живые объекты мира (юниты — одна точка, строения — четыре точки, цвет по фракции)
+// живые объекты мира (юниты — одна точка, строения — четыре точки, цвет по фракции),
+// рисует белым прямоугольником видимую камерой область мира
 // и позволяет кликом центрировать камеру мира на выбранной точке.
 public class MiniMap
 {
@@ -17,6 +18,10 @@ public class MiniMap
 
     private final static float POINT_SIZE = 3f;                             // Размер одной точки на мини-карте, px.
     private final static float POINT_GAP = 1f;                              // Зазор между точками строения, px.
+
+    public final static float VIEW_RECT_LINE_WIDTH = 2f;                    // Толщина линии прямоугольника видимой области, px.
+
+    private final Rectangle viewRect = new Rectangle();                     // Переиспользуемый прямоугольник рамки видимой области.
 
     // Прямоугольник мини-карты в экранных координатах (верх командной панели).
     public Rectangle GetBounds()
@@ -33,8 +38,9 @@ public class MiniMap
         return Gdx.graphics.getHeight() - SIZE - MARGIN * 2f;
     }
 
-    // Рисует мини-карту: фон, рамку и точки объектов мира.
-    public void Show(ShapeRenderer shapeRenderer, GameWorld world)
+    // Рисует мини-карту: фон, рамку, точки объектов мира и белый прямоугольник
+    // видимой камере области. visibleWorld — мировой прямоугольник камеры (может быть null).
+    public void Show(ShapeRenderer shapeRenderer, GameWorld world, Rectangle visibleWorld)
     {
         Rectangle bounds = GetBounds();
 
@@ -84,6 +90,55 @@ public class MiniMap
                 shapeRenderer.rect(mapX - POINT_SIZE / 2f, mapY - POINT_SIZE / 2f, POINT_SIZE, POINT_SIZE);
             }
         }
+
+        // Белая рамка видимой области мира — рисуется последней, чтобы быть поверх точек объектов.
+        ShowVisibleWorldRect(shapeRenderer, bounds, visibleWorld);
+    }
+
+    // Белая рамка видимой области мира: показывает на мини-карте, какой кусок
+    // карты сейчас виден камере.
+    private void ShowVisibleWorldRect(ShapeRenderer shapeRenderer, Rectangle bounds, Rectangle visibleWorld)
+    {
+        if (visibleWorld == null)
+        {
+            return;
+        }
+
+        Rectangle view = WorldRectToMinimap(bounds, visibleWorld, viewRect);
+        if (view.width <= 0f || view.height <= 0f)
+        {
+            return;
+        }
+
+        // Линия рисуется четырьмя тонкими полосами в уже открытом Filled-проходе,
+        // так что рисовать её можно в том же вызове Show(...).
+        float line = Math.min(VIEW_RECT_LINE_WIDTH, Math.min(view.width, view.height) / 2f);
+        shapeRenderer.setColor(Color.WHITE);
+        shapeRenderer.rect(view.x, view.y, view.width, line);
+        shapeRenderer.rect(view.x, view.y + view.height - line, view.width, line);
+        shapeRenderer.rect(view.x, view.y, line, view.height);
+        shapeRenderer.rect(view.x + view.width - line, view.y, line, view.height);
+    }
+
+    // Переводит мировой прямоугольник (видимую область камеры) в координаты мини-карты:
+    // X масштабируется по ширине карты, ось Y инвертирована (верх мира — верх мини-карты).
+    // Часть прямоугольника за пределами карты обрезается по границам мини-карты.
+    public static Rectangle WorldRectToMinimap(Rectangle bounds, Rectangle worldRect, Rectangle out)
+    {
+        float left = bounds.x + worldRect.x / GameWorld.MAP_WIDTH * bounds.width;
+        float right = bounds.x + (worldRect.x + worldRect.width) / GameWorld.MAP_WIDTH * bounds.width;
+        float bottom = bounds.y + bounds.height - worldRect.y / GameWorld.MAP_HEIGHT * bounds.height;
+        float top = bounds.y + bounds.height - (worldRect.y + worldRect.height) / GameWorld.MAP_HEIGHT * bounds.height;
+
+        float maxX = bounds.x + bounds.width;
+        float maxY = bounds.y + bounds.height;
+        left = Math.max(bounds.x, Math.min(left, maxX));
+        right = Math.max(bounds.x, Math.min(right, maxX));
+        bottom = Math.max(bounds.y, Math.min(bottom, maxY));
+        top = Math.max(bounds.y, Math.min(top, maxY));
+
+        return out.set(Math.min(left, right), Math.min(bottom, top),
+                Math.abs(right - left), Math.abs(top - bottom));
     }
 
     // Обрабатывает клик по мини-карте: если клик попал в её границы, возвращает
