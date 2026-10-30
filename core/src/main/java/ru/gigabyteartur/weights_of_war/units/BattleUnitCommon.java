@@ -16,6 +16,7 @@ import ru.gigabyteartur.weights_of_war.commands.CommandThink;
 import ru.gigabyteartur.weights_of_war.commands.CommandUnit;
 import ru.gigabyteartur.weights_of_war.commands.OrderTracker;
 import ru.gigabyteartur.weights_of_war.GameWorld;
+import ru.gigabyteartur.weights_of_war.brains.UnitBrain;
 import ru.gigabyteartur.weights_of_war.neuro_net.DenseLayer;
 import ru.gigabyteartur.weights_of_war.neuro_net.NeuroNet;
 import java.util.ArrayList;
@@ -76,6 +77,13 @@ public abstract class BattleUnitCommon extends BattleObject
     // Механизм приказов: срок жизни решения, его прерывания и переиздание команды.
     // Очередь команд остаётся здесь — приказ лишь решает, чем её наполнять.
     private final OrderTracker order = new OrderTracker();
+    // Мозг юнита. null — юнит эволюционный: решение выдаёт нейросеть.
+    // Не-null — юнит играет по вписанной стратегии, и сеть не участвует вовсе.
+    private UnitBrain brain = null;
+    // Держится ли ещё действие, выбранное вписанной стратегией. Аналог живого
+    // приказа у обученного юнита: пока действие держится, мозг спрашивают сразу,
+    // без паузы «на подумать», и юнит движется непрерывно, а не шагами с простоями.
+    private boolean scriptedContinues = false;
     private ArrayList<CommandUnit> commandsQueue = new ArrayList<CommandUnit>();        // очередь команд.
 
     protected float separationRadius = 30f;      // Радиус отталкивания от союзников (boids).
@@ -240,6 +248,28 @@ public abstract class BattleUnitCommon extends BattleObject
                 if (repeated != null)
                 {
                     commandsQueue.add(repeated);
+                }
+            }
+            else if (brain != null)
+            {
+                // Вписанная стратегия решает вместо сети. Держащееся действие
+                // продолжается без паузы — ровно так же, как живой приказ у
+                // обученного юнита переиздаётся через OrderTracker. Разовое
+                // действие («выбрать цель») ждёт кулдаун, чтобы темп решений
+                // сравнивался честно.
+                if (scriptedContinues || decisionCooldown <= 0f)
+                {
+                    CommandUnit decided = brain.Decide(this, world);
+                    if (decided != null)
+                    {
+                        AddCommand(decided);
+                        scriptedContinues = decided.IsPersistentOrder();
+                    }
+                    else
+                    {
+                        scriptedContinues = false;
+                    }
+                    decisionCooldown = DECISION_INTERVAL_SEC;
                 }
             }
             else if (decisionCooldown <= 0f)
@@ -725,6 +755,25 @@ public abstract class BattleUnitCommon extends BattleObject
         this.GenerationNumber = generationNumber;
     }
 
+    // Вписанная стратегия юнита или null, если юнит обучается.
+    public UnitBrain getBrain()
+    {
+        return brain;
+    }
+
+    // Назначает юниту вписанную стратегию (или снимает её, если brain == null).
+    // Сеть при этом не трогается: она просто перестаёт быть источником решения.
+    public void setBrain(UnitBrain brain)
+    {
+        this.brain = brain;
+    }
+
+    // Играет ли юнит по вписанной стратегии, а не по нейросети.
+    public boolean IsScripted()
+    {
+        return brain != null;
+    }
+
     public NeuroNet getNeuroNet()
     {
         return neuroNet;
@@ -754,6 +803,8 @@ public abstract class BattleUnitCommon extends BattleObject
         targetObject = null;
         attacked = 0f;
         decisionCooldown = 0f;
+        brain = null;
+        scriptedContinues = false;
         order.Reset();
     }
 

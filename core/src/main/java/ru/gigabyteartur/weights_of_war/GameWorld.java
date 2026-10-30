@@ -31,6 +31,10 @@ public class GameWorld {
     public final static int MAP_HEIGHT = 4000;                              // Высота игрового мира (поле боя), мировые единицы.
     public final static float FOG_UPDATE_INTERVAL = 0.1f;                   // Период обновления тумана войны, сек.
     public final static float NEURO_LOG_INTERVAL = 10f;                     // Период логирования нейросети, сек.
+    // Фракция, все юниты которой играют по вписанной стратегии, а не учатся.
+    // Сравнение «обучение против простых правил» требует, чтобы в обычном прогоне
+    // одна из четырёх фракций играла по правилам, а три продолжали учиться.
+    public final static String SCRIPTED_FRACTION_NAME = "Green";
 
     // Границы игрового мира (поле битвы), за которые юнитам запрещено перемещаться.
     private int worldLeft;                                                  // Левая граница мира.
@@ -157,6 +161,12 @@ public class GameWorld {
         PlaceTower(blueCore, blueFraction);
         PlaceTower(yellowCore, yellowFraction);
         PlaceTower(greenCore, greenFraction);
+        // Одно из четырёх ядер играет по вписанной стратегии — в обычном прогоне,
+        // а не только в тесте. Остальные три учатся как раньше.
+        redCore.setScripted(redFraction.getName().equals(SCRIPTED_FRACTION_NAME));
+        blueCore.setScripted(blueFraction.getName().equals(SCRIPTED_FRACTION_NAME));
+        yellowCore.setScripted(yellowFraction.getName().equals(SCRIPTED_FRACTION_NAME));
+        greenCore.setScripted(greenFraction.getName().equals(SCRIPTED_FRACTION_NAME));
         // Загружаем сохранённые нейросети (если есть) во все ядра.
         LoadSavedNeuroNets();
         // Строим начальную сетку тумана войны (до первого обновления).
@@ -205,7 +215,13 @@ public class GameWorld {
         {
             if (object instanceof BuildingCore)
             {
-                ((BuildingCore) object).SetNeuroNets(swordmanNet, archerNet, shieldmanNet, priestNet, scoutNet);
+                BuildingCore core = (BuildingCore) object;
+                // Вписанному ядру сети не нужны: оно не учится и не должно
+                // сохранять чемпионов обратно в общий файл.
+                if (!core.isScripted())
+                {
+                    core.SetNeuroNets(swordmanNet, archerNet, shieldmanNet, priestNet, scoutNet);
+                }
             }
         }
     }
@@ -1158,8 +1174,10 @@ public class GameWorld {
         ArrayList<T> aliveUnits = new ArrayList<T>();
         for (PlacedObject object : units)
         {
+            // Вписанные юниты не несут генов: их нельзя брать в родители.
             if (unitClass.isInstance(object) && !object.IsDead()
-                    && ((BattleObject) object).getFraction() == fraction)
+                    && ((BattleObject) object).getFraction() == fraction
+                    && !((BattleUnitCommon) object).IsScripted())
             {
                 aliveUnits.add((T) object);
             }
@@ -1190,7 +1208,9 @@ public class GameWorld {
         T best = null;
         for (PlacedObject object : units)
         {
-            if (unitClass.isInstance(object) && !object.IsDead())
+            // Вписанный юнит играет по правилам, его фит ничего не говорит
+            // о качестве генов — сохранять его как чемпиона нельзя.
+            if (unitClass.isInstance(object) && !object.IsDead() && !((BattleUnitCommon) object).IsScripted())
             {
                 T candidate = (T) object;
                 if (best == null || GetEffectiveFit(candidate) > GetEffectiveFit(best))
@@ -1239,7 +1259,9 @@ public class GameWorld {
             if (unitClass.isInstance(object) && !object.IsDead())
             {
                 BattleObject battleObject = (BattleObject) object;
-                if (battleObject.getFraction() != null && battleObject.getFraction() != ownFraction)
+                // Чужой вписанный юнит — не источник генов: у него их нет.
+                if (battleObject.getFraction() != null && battleObject.getFraction() != ownFraction
+                        && !((BattleUnitCommon) object).IsScripted())
                 {
                     T candidate = (T) object;
                     if (best == null || GetEffectiveFit(candidate) > GetEffectiveFit(best))

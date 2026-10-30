@@ -6,6 +6,8 @@ import java.util.Random;
 import com.badlogic.gdx.Gdx;
 import ru.gigabyteartur.weights_of_war.GameWorld;
 import ru.gigabyteartur.weights_of_war.TextureCache;
+import ru.gigabyteartur.weights_of_war.brains.ScriptedBrain;
+import ru.gigabyteartur.weights_of_war.brains.UnitBrain;
 import ru.gigabyteartur.weights_of_war.commands.CommandThink;
 import ru.gigabyteartur.weights_of_war.evo.Evolution;
 import ru.gigabyteartur.weights_of_war.neuro_net.NeuroNet;
@@ -50,6 +52,11 @@ public class BuildingCore extends BattleBuildingCommon
     private ArrayList<Integer> NetScoutsFits = new ArrayList<>();   // Фиты чемпионов разведчиков.
     private Random random = new Random();                // Генератор случайных чисел.
     private Evolution evolutionAlgo = new Evolution();                     // Эволюционные алгоритмы.
+    // Играет ли это ядро по вписанной стратегии вместо эволюции. Флаг принадлежит
+    // ядру, а не фракции: включённый на одном из четырёх ядер, он не задевает три
+    // остальных, и те продолжают учиться как раньше.
+    private boolean scripted = false;
+    private UnitBrain scriptedBrain = new ScriptedBrain();
 
     public BuildingCore()
     {
@@ -95,7 +102,9 @@ public class BuildingCore extends BattleBuildingCommon
 
     // Производит отряд юнитов рядом с ядром и отправляет их в бой.
     // Для нового юнита сначала переиспользуется мёртвый объект того же класса.
-    void ProduceUnits(GameWorld world)
+    // public, потому что режим ядра (эволюция или вписанная стратегия) проверяется
+    // тестами из пакета brains: им нужен один цикл выпуска без ожидания 60 секунд.
+    public void ProduceUnits(GameWorld world)
     {
         // Если сторожевая башня фракции разрушена, с вероятностью TOWER_DESTROYED_SKIP_RATE
         // пропускаем генерацию нового поколения юнитов.
@@ -106,8 +115,9 @@ public class BuildingCore extends BattleBuildingCommon
 
         GenerationNumber++;
         // При первой генерации создаём нейросети для каждого типа юнитов,
-        // если они ещё не загружены из сохранения.
-        if (GenerationNumber == 1)
+        // если они ещё не загружены из сохранения. Вписанному ядру сети не нужны:
+        // оно не учится и не хранит чемпионов.
+        if (GenerationNumber == 1 && !scripted)
         {
             if (NetSwordmen.isEmpty())
             {
@@ -138,13 +148,40 @@ public class BuildingCore extends BattleBuildingCommon
 
         // Шаг мутации подстраивается под прогресс: растёт лучший фит — шлифуем,
         // застой — расширяем поиск. Считаем по лучшему фиту среди всех типов.
-        evolutionAlgo.AdaptSigma(GetBestCoreFit());
+        ArrayList<NeuroNet> swordmenOffspring;
+        ArrayList<NeuroNet> archersOffspring;
+        ArrayList<NeuroNet> shieldmenOffspring;
+        ArrayList<NeuroNet> priestsOffspring;
+        ArrayList<NeuroNet> scoutsOffspring;
+        if (scripted)
+        {
+            // Вписанное ядро не отбирает и не скрещивает: юниты не несут генов,
+            // и любое обновление пула чемпионов здесь отравило бы эволюцию
+            // остальных ядер, которые учатся на общем сохранении.
+            swordmenOffspring = BlankOffspring(SWORDMEN_COUNT);
+            archersOffspring = BlankOffspring(ARCHERS_COUNT);
+            shieldmenOffspring = BlankOffspring(SHIELDMEN_COUNT);
+            priestsOffspring = BlankOffspring(PRIESTS_COUNT);
+            scoutsOffspring = BlankOffspring(SCOUTS_COUNT);
+        }
+        else
+        {
+            evolutionAlgo.AdaptSigma(GetBestCoreFit());
+            swordmenOffspring = null;
+            archersOffspring = null;
+            shieldmenOffspring = null;
+            priestsOffspring = null;
+            scoutsOffspring = null;
+        }
 
+        if (!scripted)
+        {
         // Эволюция для мечников.
         ArrayList<UnitSwordman> topSwordmen = world.GetTopAliveUnits(UnitSwordman.class, LIMIT_BEST_UNITS, getFraction());
         UnitSwordman enemySwordman = (random.nextDouble() < ENEMY_GENE_TRANSFER_RATE) ? world.GetBestEnemyUnit(UnitSwordman.class, getFraction()) : null;
-        ArrayList<NeuroNet> swordmenOffspring = evolutionAlgo.GenerateOffspring(topSwordmen, NetSwordmen, NetSwordmenFits, SWORDMEN_COUNT, enemySwordman);
+        swordmenOffspring = evolutionAlgo.GenerateOffspring(topSwordmen, NetSwordmen, NetSwordmenFits, SWORDMEN_COUNT, enemySwordman);
         evolutionAlgo.UpdateCoreNets(topSwordmen, NetSwordmen, NetSwordmenFits);
+        }
 
         for (int i = 0; i < SWORDMEN_COUNT; i++)
         {
@@ -162,15 +199,17 @@ public class BuildingCore extends BattleBuildingCommon
             unit.setFraction(getFraction());
             unit.setGenerationNumber(GenerationNumber);
             unit.ResetUnitState();
-            unit.setNeuroNet(swordmenOffspring.get(i));
-            unit.AddCommand(new CommandThink(unit.CreateSensors()));
+            PrepareUnit(unit, swordmenOffspring.get(i));
         }
 
         // Эволюция для лучников.
+        if (!scripted)
+        {
         ArrayList<UnitArcher> topArchers = world.GetTopAliveUnits(UnitArcher.class, LIMIT_BEST_UNITS, getFraction());
         UnitArcher enemyArcher = (random.nextDouble() < ENEMY_GENE_TRANSFER_RATE) ? world.GetBestEnemyUnit(UnitArcher.class, getFraction()) : null;
-        ArrayList<NeuroNet> archersOffspring = evolutionAlgo.GenerateOffspring(topArchers, NetArchers, NetArchersFits, ARCHERS_COUNT, enemyArcher);
+        archersOffspring = evolutionAlgo.GenerateOffspring(topArchers, NetArchers, NetArchersFits, ARCHERS_COUNT, enemyArcher);
         evolutionAlgo.UpdateCoreNets(topArchers, NetArchers, NetArchersFits);
+        }
 
         for (int i = 0; i < ARCHERS_COUNT; i++)
         {
@@ -188,15 +227,17 @@ public class BuildingCore extends BattleBuildingCommon
             unit.setFraction(getFraction());
             unit.setGenerationNumber(GenerationNumber);
             unit.ResetUnitState();
-            unit.setNeuroNet(archersOffspring.get(i));
-            unit.AddCommand(new CommandThink(unit.CreateSensors()));
+            PrepareUnit(unit, archersOffspring.get(i));
         }
 
         // Эволюция для щитовиков.
+        if (!scripted)
+        {
         ArrayList<UnitShieldman> topShieldmen = world.GetTopAliveUnits(UnitShieldman.class, LIMIT_BEST_UNITS, getFraction());
         UnitShieldman enemyShieldman = (random.nextDouble() < ENEMY_GENE_TRANSFER_RATE) ? world.GetBestEnemyUnit(UnitShieldman.class, getFraction()) : null;
-        ArrayList<NeuroNet> shieldmenOffspring = evolutionAlgo.GenerateOffspring(topShieldmen, NetShieldmen, NetShieldmenFits, SHIELDMEN_COUNT, enemyShieldman);
+        shieldmenOffspring = evolutionAlgo.GenerateOffspring(topShieldmen, NetShieldmen, NetShieldmenFits, SHIELDMEN_COUNT, enemyShieldman);
         evolutionAlgo.UpdateCoreNets(topShieldmen, NetShieldmen, NetShieldmenFits);
+        }
 
         for (int i = 0; i < SHIELDMEN_COUNT; i++)
         {
@@ -214,15 +255,17 @@ public class BuildingCore extends BattleBuildingCommon
             unit.setFraction(getFraction());
             unit.setGenerationNumber(GenerationNumber);
             unit.ResetUnitState();
-            unit.setNeuroNet(shieldmenOffspring.get(i));
-            unit.AddCommand(new CommandThink(unit.CreateSensors()));
+            PrepareUnit(unit, shieldmenOffspring.get(i));
         }
 
         // Эволюция для жрецов.
+        if (!scripted)
+        {
         ArrayList<UnitPriest> topPriests = world.GetTopAliveUnits(UnitPriest.class, LIMIT_BEST_UNITS, getFraction());
         UnitPriest enemyPriest = (random.nextDouble() < ENEMY_GENE_TRANSFER_RATE) ? world.GetBestEnemyUnit(UnitPriest.class, getFraction()) : null;
-        ArrayList<NeuroNet> priestsOffspring = evolutionAlgo.GenerateOffspring(topPriests, NetPriests, NetPriestsFits, PRIESTS_COUNT, enemyPriest);
+        priestsOffspring = evolutionAlgo.GenerateOffspring(topPriests, NetPriests, NetPriestsFits, PRIESTS_COUNT, enemyPriest);
         evolutionAlgo.UpdateCoreNets(topPriests, NetPriests, NetPriestsFits);
+        }
 
         for (int i = 0; i < PRIESTS_COUNT; i++)
         {
@@ -240,15 +283,17 @@ public class BuildingCore extends BattleBuildingCommon
             unit.setFraction(getFraction());
             unit.setGenerationNumber(GenerationNumber);
             unit.ResetUnitState();
-            unit.setNeuroNet(priestsOffspring.get(i));
-            unit.AddCommand(new CommandThink(unit.CreateSensors()));
+            PrepareUnit(unit, priestsOffspring.get(i));
         }
 
         // Эволюция для разведчиков.
+        if (!scripted)
+        {
         ArrayList<UnitScout> topScouts = world.GetTopAliveUnits(UnitScout.class, LIMIT_BEST_UNITS, getFraction());
         UnitScout enemyScout = (random.nextDouble() < ENEMY_GENE_TRANSFER_RATE) ? world.GetBestEnemyUnit(UnitScout.class, getFraction()) : null;
-        ArrayList<NeuroNet> scoutsOffspring = evolutionAlgo.GenerateOffspring(topScouts, NetScouts, NetScoutsFits, SCOUTS_COUNT, enemyScout);
+        scoutsOffspring = evolutionAlgo.GenerateOffspring(topScouts, NetScouts, NetScoutsFits, SCOUTS_COUNT, enemyScout);
         evolutionAlgo.UpdateCoreNets(topScouts, NetScouts, NetScoutsFits);
+        }
 
         for (int i = 0; i < SCOUTS_COUNT; i++)
         {
@@ -266,9 +311,20 @@ public class BuildingCore extends BattleBuildingCommon
             unit.setFraction(getFraction());
             unit.setGenerationNumber(GenerationNumber);
             unit.ResetUnitState();
-            unit.setNeuroNet(scoutsOffspring.get(i));
-            unit.AddCommand(new CommandThink(unit.CreateSensors()));
+            PrepareUnit(unit, scoutsOffspring.get(i));
         }
+    }
+
+    // Список заглушек вместо потомков: вписанному ядру сети не нужны, но цикл
+    // выпуска юнитов общий для обоих режимов, и ему нужен список той же длины.
+    private static ArrayList<NeuroNet> BlankOffspring(int count)
+    {
+        ArrayList<NeuroNet> offspring = new ArrayList<NeuroNet>();
+        for (int i = 0; i < count; i++)
+        {
+            offspring.add(null);
+        }
+        return offspring;
     }
 
     // Генерирует случайную свободную позицию для юнита: 70% — в центре карты, остальные — у ядра.
@@ -312,6 +368,53 @@ public class BuildingCore extends BattleBuildingCommon
         this.setMaxHealth(DEFAULT_MAX_HEALTH);
         this.setHealth(DEFAULT_MAX_HEALTH);
         this.setSightRange(DEFAULT_SIGHT_RANGE);
+    }
+
+    // Играет ли ядро по вписанной стратегии вместо эволюции.
+    public boolean isScripted()
+    {
+        return scripted;
+    }
+
+    // Включает вписанную стратегию: все юниты, произведённые этим ядром с этого
+    // момента, решают по правилам, а не сетью. Уже выпущенные юниты не меняются —
+    // они остаются тем, чем были.
+    public void setScripted(boolean scripted)
+    {
+        this.scripted = scripted;
+    }
+
+    // Вписанная стратегия этого ядра (null, если ядро эволюционное).
+    public UnitBrain getScriptedBrain()
+    {
+        return scripted ? scriptedBrain : null;
+    }
+
+    // Заменяет вписанную стратегию (например, в тестах с фиксированным Random).
+    public void setScriptedBrain(UnitBrain brain)
+    {
+        this.scriptedBrain = brain;
+    }
+
+    // Создаёт юнита нужного типа: либо эволюционного (сеть + CommandThink),
+    // либо играющего по вписанной стратегии. Обе ветки пишут одно и то же
+    // состояние юнита, поэтому дальше движку всё равно, кто перед ним.
+    private <T extends BattleUnitCommon> T PrepareUnit(T unit, NeuroNet offspring)
+    {
+        if (scripted)
+        {
+            // Сети у юнита нет вовсе: иначе он остался бы кандидатом в отбор
+            // и его фит потащил бы за собой чужую линию генов.
+            unit.setNeuroNet(null);
+            unit.setBrain(scriptedBrain != null ? scriptedBrain : new ScriptedBrain());
+        }
+        else
+        {
+            unit.setNeuroNet(offspring);
+            unit.setBrain(null);
+            unit.AddCommand(new CommandThink(unit.CreateSensors()));
+        }
+        return unit;
     }
 
     // Устанавливает нейросети для всех типов юнитов (для загрузки из сохранения).
