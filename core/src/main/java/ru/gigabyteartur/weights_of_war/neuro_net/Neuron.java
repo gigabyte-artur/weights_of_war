@@ -76,28 +76,39 @@ public class Neuron
         return Axons;
     }
 
-    // С вероятностью probablity_in устанавливает всем аксонам текущего нейрона
-    // случайные веса.
-    public void Mutate(double probablity_in)
+    // С вероятностью probablity_in возмущает вес каждого аксона текущего нейрона
+    // гауссовым шумом (weight += N(0, sigma)), а не заменой на случайное число.
+    //
+    // Замена веса случайным значением из [-1, 1] уничтожала накопленное знание:
+    // потомок отличался от родителя на целую случайную величину, поэтому поиск
+    // не сходился (проверено стендом: см. Evolution.SEARCH NOTE). Гауссово
+    // возмущение сохраняет уже найденную структуру и лишь локально её сдвигает.
+    public void Mutate(double probablity_in, double sigma_in)
     {
-        double new_weight;
         final Random random = new Random();
-        int dice;
         for (Axon curr_axon:this.Axons)
         {
-            dice = random.nextInt(100);
-            if (dice <= probablity_in * 100)
+            if (random.nextDouble() < probablity_in)
             {
-                new_weight = (random.nextDouble() * 2) - 1;
-                curr_axon.SetWeight(new_weight);
+                curr_axon.SetWeight(ClampWeight(curr_axon.GetWeight() + random.nextGaussian() * sigma_in));
             }
         }
-        // Мутация смещения (bias) в диапазоне -4..4.
-        dice = random.nextInt(100);
-        if (dice <= probablity_in * 100)
+        // Смещение (bias) возмущается тем же оператором.
+        if (random.nextDouble() < probablity_in)
         {
-            this.bias = (random.nextDouble() * 8) - 4;
+            this.bias = ClampWeight(this.bias + random.nextGaussian() * sigma_in);
         }
+    }
+
+    // Ограничивает вес разумным диапазоном: без потолка редкие крупные шаги
+    // насыщают tanh и сеть теряет чувствительность к входам.
+    public final static double WEIGHT_LIMIT = 4.0;
+
+    private static double ClampWeight(double value_in)
+    {
+        if (value_in > WEIGHT_LIMIT) return WEIGHT_LIMIT;
+        if (value_in < -WEIGHT_LIMIT) return -WEIGHT_LIMIT;
+        return value_in;
     }
 
     // Возвращает идентификатор нейрона.

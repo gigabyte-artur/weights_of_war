@@ -139,10 +139,14 @@ public class BuildingCore extends BattleBuildingCommon
         // Юниты с неизменным фитом умирают.
         world.CheckUnitsStagnation(STAGNATION_WAVES);
 
+        // Шаг мутации подстраивается под прогресс: растёт лучший фит — шлифуем,
+        // застой — расширяем поиск. Считаем по лучшему фиту среди всех типов.
+        evolutionAlgo.AdaptSigma(GetBestCoreFit());
+
         // Эволюция для мечников.
         ArrayList<UnitSwordman> topSwordmen = world.GetTopAliveUnits(UnitSwordman.class, LIMIT_BEST_UNITS, getFraction());
         UnitSwordman enemySwordman = (random.nextDouble() < ENEMY_GENE_TRANSFER_RATE) ? world.GetBestEnemyUnit(UnitSwordman.class, getFraction()) : null;
-        ArrayList<NeuroNet> swordmenOffspring = evolutionAlgo.GenerateOffspring(topSwordmen, NetSwordmen, SWORDMEN_COUNT, enemySwordman);
+        ArrayList<NeuroNet> swordmenOffspring = evolutionAlgo.GenerateOffspring(topSwordmen, NetSwordmen, NetSwordmenFits, SWORDMEN_COUNT, enemySwordman);
         evolutionAlgo.UpdateCoreNets(topSwordmen, NetSwordmen, NetSwordmenFits);
 
         for (int i = 0; i < SWORDMEN_COUNT; i++)
@@ -168,7 +172,7 @@ public class BuildingCore extends BattleBuildingCommon
         // Эволюция для лучников.
         ArrayList<UnitArcher> topArchers = world.GetTopAliveUnits(UnitArcher.class, LIMIT_BEST_UNITS, getFraction());
         UnitArcher enemyArcher = (random.nextDouble() < ENEMY_GENE_TRANSFER_RATE) ? world.GetBestEnemyUnit(UnitArcher.class, getFraction()) : null;
-        ArrayList<NeuroNet> archersOffspring = evolutionAlgo.GenerateOffspring(topArchers, NetArchers, ARCHERS_COUNT, enemyArcher);
+        ArrayList<NeuroNet> archersOffspring = evolutionAlgo.GenerateOffspring(topArchers, NetArchers, NetArchersFits, ARCHERS_COUNT, enemyArcher);
         evolutionAlgo.UpdateCoreNets(topArchers, NetArchers, NetArchersFits);
 
         for (int i = 0; i < ARCHERS_COUNT; i++)
@@ -194,7 +198,7 @@ public class BuildingCore extends BattleBuildingCommon
         // Эволюция для щитовиков.
         ArrayList<UnitShieldman> topShieldmen = world.GetTopAliveUnits(UnitShieldman.class, LIMIT_BEST_UNITS, getFraction());
         UnitShieldman enemyShieldman = (random.nextDouble() < ENEMY_GENE_TRANSFER_RATE) ? world.GetBestEnemyUnit(UnitShieldman.class, getFraction()) : null;
-        ArrayList<NeuroNet> shieldmenOffspring = evolutionAlgo.GenerateOffspring(topShieldmen, NetShieldmen, SHIELDMEN_COUNT, enemyShieldman);
+        ArrayList<NeuroNet> shieldmenOffspring = evolutionAlgo.GenerateOffspring(topShieldmen, NetShieldmen, NetShieldmenFits, SHIELDMEN_COUNT, enemyShieldman);
         evolutionAlgo.UpdateCoreNets(topShieldmen, NetShieldmen, NetShieldmenFits);
 
         for (int i = 0; i < SHIELDMEN_COUNT; i++)
@@ -220,7 +224,7 @@ public class BuildingCore extends BattleBuildingCommon
         // Эволюция для жрецов.
         ArrayList<UnitPriest> topPriests = world.GetTopAliveUnits(UnitPriest.class, LIMIT_BEST_UNITS, getFraction());
         UnitPriest enemyPriest = (random.nextDouble() < ENEMY_GENE_TRANSFER_RATE) ? world.GetBestEnemyUnit(UnitPriest.class, getFraction()) : null;
-        ArrayList<NeuroNet> priestsOffspring = evolutionAlgo.GenerateOffspring(topPriests, NetPriests, PRIESTS_COUNT, enemyPriest);
+        ArrayList<NeuroNet> priestsOffspring = evolutionAlgo.GenerateOffspring(topPriests, NetPriests, NetPriestsFits, PRIESTS_COUNT, enemyPriest);
         evolutionAlgo.UpdateCoreNets(topPriests, NetPriests, NetPriestsFits);
 
         for (int i = 0; i < PRIESTS_COUNT; i++)
@@ -246,7 +250,7 @@ public class BuildingCore extends BattleBuildingCommon
         // Эволюция для разведчиков.
         ArrayList<UnitScout> topScouts = world.GetTopAliveUnits(UnitScout.class, LIMIT_BEST_UNITS, getFraction());
         UnitScout enemyScout = (random.nextDouble() < ENEMY_GENE_TRANSFER_RATE) ? world.GetBestEnemyUnit(UnitScout.class, getFraction()) : null;
-        ArrayList<NeuroNet> scoutsOffspring = evolutionAlgo.GenerateOffspring(topScouts, NetScouts, SCOUTS_COUNT, enemyScout);
+        ArrayList<NeuroNet> scoutsOffspring = evolutionAlgo.GenerateOffspring(topScouts, NetScouts, NetScoutsFits, SCOUTS_COUNT, enemyScout);
         evolutionAlgo.UpdateCoreNets(topScouts, NetScouts, NetScoutsFits);
 
         for (int i = 0; i < SCOUTS_COUNT; i++)
@@ -334,6 +338,24 @@ public class BuildingCore extends BattleBuildingCommon
             nets.add(net);
             fits.add(0);
         }
+    }
+
+    // Лучший фит среди чемпионов всех типов — сигнал прогресса для адаптивного шага мутации.
+    private int GetBestCoreFit()
+    {
+        int best = 0;
+        for (int fit : NetSwordmenFits) best = Math.max(best, fit);
+        for (int fit : NetArchersFits) best = Math.max(best, fit);
+        for (int fit : NetShieldmenFits) best = Math.max(best, fit);
+        for (int fit : NetPriestsFits) best = Math.max(best, fit);
+        for (int fit : NetScoutsFits) best = Math.max(best, fit);
+        return best;
+    }
+
+    // Возвращает количество потомков-поколений произведённого типа (для тестов эволюции).
+    public Evolution getEvolutionAlgo()
+    {
+        return evolutionAlgo;
     }
 
     public int getGenerationNumber()

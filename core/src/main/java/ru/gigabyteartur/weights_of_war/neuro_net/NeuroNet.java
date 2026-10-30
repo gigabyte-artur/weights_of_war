@@ -280,13 +280,13 @@ public class NeuroNet
         }
     }
 
-    // С вероятностью probablity_in устанавливает всем аксонам текущей нейронной сети
-    // случайные веса.
-    public void Mutate(double probablity_in)
+    // С вероятностью probablity_in возмущает веса и смещения всей сети
+    // гауссовым шумом с разбросом sigma_in.
+    public void Mutate(double probablity_in, double sigma_in)
     {
         for (Layer curr_layer:this.Layers)
         {
-            curr_layer.Mutate(probablity_in);
+            curr_layer.Mutate(probablity_in, sigma_in);
         }
     }
 

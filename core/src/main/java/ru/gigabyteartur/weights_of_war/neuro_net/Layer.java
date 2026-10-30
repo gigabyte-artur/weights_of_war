@@ -147,13 +147,13 @@ public class Layer
         }
     }
 
-    // С вероятностью probablity_in устанавливает всем аксонам текущего слоя
-    // случайные веса.
-    public void Mutate(double probablity_in)
+    // С вероятностью probablity_in возмущает веса и смещения нейронов слоя
+    // гауссовым шумом с разбросом sigma_in.
+    public void Mutate(double probablity_in, double sigma_in)
     {
         for (Neuron curr_neuron:this.Neurons)
         {
-            curr_neuron.Mutate(probablity_in);
+            curr_neuron.Mutate(probablity_in, sigma_in);
         }
     }
 

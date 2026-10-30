@@ -6,7 +6,10 @@ import ru.gigabyteartur.weights_of_war.GameWorld;
 import ru.gigabyteartur.weights_of_war.HeadlessGdxTest;
 import ru.gigabyteartur.weights_of_war.PlacedObject;
 import ru.gigabyteartur.weights_of_war.evo.Evolution;
+import ru.gigabyteartur.weights_of_war.neuro_net.Layer;
+import ru.gigabyteartur.weights_of_war.neuro_net.Neuron;
 import ru.gigabyteartur.weights_of_war.neuro_net.NeuroNet;
+import ru.gigabyteartur.weights_of_war.neuro_net.Axon;
 import ru.gigabyteartur.weights_of_war.testutil.TestUnit;
 import ru.gigabyteartur.weights_of_war.units.BattleUnitCommon;
 import ru.gigabyteartur.weights_of_war.units.UnitArcher;
@@ -187,7 +190,7 @@ public class BuildingCoreTest extends HeadlessGdxTest
     }
 
     @Test
-    public void effectiveFitAppliesGenerationSurvivalBonus()
+    public void effectiveFitIgnoresGenerationSoNewerNetworksCanWin()
     {
         BuildingCore core = new BuildingCore(0, 0);
         core.setFraction(fraction);
@@ -220,10 +223,17 @@ public class BuildingCoreTest extends HeadlessGdxTest
         gen1.setFit(100);
         gen2.setFit(100);
 
-        // Поколение 1 при текущем поколении 2: бонус (2 - 1) / 10 = 0.1 → 100 * 1.1 = 110.
-        assertEquals(110, world.GetEffectiveFit(gen1));
-        // Поколение 2 (текущее): бонус 0 → 100.
+        // Равный фит — равный приоритет независимо от номера поколения.
+        // Раньше старое поколение получало множитель (1 + (текущее - своё) / 10),
+        // то есть преимущество за то, что юнит произведён РАНЬШЕ. Это вытесняло
+        // новые сети из отбора и блокировало обучение (измерено на стенде:
+        // средний фит популяции падал 70 → 53 при росте фита чемпионов).
+        assertEquals(100, world.GetEffectiveFit(gen1));
         assertEquals(100, world.GetEffectiveFit(gen2));
+
+        // Больший собственный фит всегда выигрывает у меньшего, кто бы его ни набрал.
+        gen1.setFit(150);
+        assertTrue(world.GetEffectiveFit(gen1) > world.GetEffectiveFit(gen2));
     }
 
     @Test
@@ -296,5 +306,158 @@ public class BuildingCoreTest extends HeadlessGdxTest
                 return value;
             }
         });
+    }
+
+    // --- Адаптивный шаг мутации ---
+
+    @Test
+    public void evolutionShrinksMutationStepWhileProgressContinues()
+    {
+        Evolution evo = new Evolution();
+        double start = evo.GetSigma();
+        evo.AdaptSigma(10);
+        evo.AdaptSigma(20);
+        evo.AdaptSigma(30);
+        assertTrue(evo.GetSigma() < start,
+                "при прогрессе шаг мутации должен уменьшаться (шлифовка)");
+    }
+
+    @Test
+    public void evolutionGrowsMutationStepDuringStagnation()
+    {
+        Evolution evo = new Evolution();
+        // Сначала немного прогресса, чтобы уйти от стартового значения вниз.
+        evo.AdaptSigma(1000);
+        double afterProgress = evo.GetSigma();
+
+        // Застой: лучший фит не растёт.
+        for (int i = 0; i < Evolution.STAGNATION_LIMIT * 3; i++)
+        {
+            evo.AdaptSigma(1000);
+        }
+        assertTrue(evo.GetSigma() > afterProgress,
+                "при застое шаг мутации должен расти (разведка)");
+    }
+
+    @Test
+    public void evolutionSigmaStaysWithinBounds()
+    {
+        Evolution evo = new Evolution();
+        for (int i = 0; i < 200; i++)
+        {
+            evo.AdaptSigma(9999);   // непрерывный прогресс
+        }
+        assertTrue(evo.GetSigma() >= Evolution.SIGMA_MIN);
+        assertTrue(evo.GetSigma() <= Evolution.SIGMA_MAX);
+
+        for (int i = 0; i < 200; i++)
+        {
+            evo.AdaptSigma(9999);   // непрерывный застой
+        }
+        assertTrue(evo.GetSigma() >= Evolution.SIGMA_MIN);
+        assertTrue(evo.GetSigma() <= Evolution.SIGMA_MAX);
+    }
+
+    @Test
+    public void offspringStillContainsExactEliteCopy()
+    {
+        // Первый потомок — точная копия чемпиона, чтобы найденное не терялось.
+        Evolution evo = new Evolution();
+        NeuroNet champion = BattleUnitCommon.CreateNeuroNetUnit();
+        ArrayList<NeuroNet> coreNets = new ArrayList<>();
+        coreNets.add(champion);
+
+        ArrayList<NeuroNet> offspring = evo.GenerateOffspring(new ArrayList<TestUnit>(), coreNets, 5, null);
+        assertEquals(5, offspring.size());
+
+        NeuroNet elite = offspring.get(0);
+        ArrayList<Axon> a = champion.GetLayers().get(1).GetNeurons().get(0).GetAxons();
+        ArrayList<Axon> b = elite.GetLayers().get(1).GetNeurons().get(0).GetAxons();
+        for (int i = 0; i < a.size(); i++)
+        {
+            assertEquals(a.get(i).GetWeight(), b.get(i).GetWeight(), 1e-12);
+        }
+        assertNotSame(champion, elite);
+    }
+
+    // --- Турнирный отбор и иммигранты ---
+
+    @Test
+    public void tournamentSelectionFavoursFitterParents()
+    {
+        // Турнир должен давать давление отбора: при резко различающихся фитах
+        // большинство потомков несёт гены сильного родителя.
+        Evolution evo = new Evolution();
+
+        NeuroNet strong = BattleUnitCommon.CreateNeuroNetUnit();
+        for (Layer l : strong.GetLayers())
+            for (Neuron n : l.GetNeurons())
+                for (Axon a : n.GetAxons())
+                    a.SetWeight(1.0);
+
+        NeuroNet weak = BattleUnitCommon.CreateNeuroNetUnit();
+        for (Layer l : weak.GetLayers())
+            for (Neuron n : l.GetNeurons())
+                for (Axon a : n.GetAxons())
+                    a.SetWeight(-1.0);
+
+        ArrayList<NeuroNet> coreNets = new ArrayList<>();
+        coreNets.add(strong);
+        coreNets.add(weak);
+        ArrayList<Integer> coreFits = new ArrayList<>();
+        coreFits.add(1000);
+        coreFits.add(0);
+
+        int strongish = 0;
+        int generations = 40;
+        for (int g = 0; g < generations; g++)
+        {
+            ArrayList<NeuroNet> kids = evo.GenerateOffspring(new ArrayList<TestUnit>(), coreNets, coreFits, 5, null);
+            // Первый потомок — копия чемпиона (strong). Считаем остальных.
+            for (int i = 1; i < kids.size(); i++)
+            {
+                double w = kids.get(i).GetLayers().get(1).GetNeurons().get(0).GetAxons().get(0).GetWeight();
+                if (w > 0.5) strongish++;
+            }
+        }
+        // При равномерном случайном выборе доля была бы ~50%. Ждём заметно больше.
+        int total = generations * 4;
+        assertTrue(strongish > total / 2,
+                "турнирный отбор не даёт давления: " + strongish + " из " + total);
+    }
+
+    @Test
+    public void offspringContainsRandomImmigrantForDiversity()
+    {
+        Evolution evo = new Evolution();
+        NeuroNet champion = BattleUnitCommon.CreateNeuroNetUnit();
+        ArrayList<NeuroNet> coreNets = new ArrayList<>();
+        coreNets.add(champion);
+
+        ArrayList<NeuroNet> kids = evo.GenerateOffspring(new ArrayList<TestUnit>(), coreNets, null, 6, null);
+        assertEquals(6, kids.size());
+
+        // Последний потомок — иммигрант с полностью случайными весами,
+        // поэтому он не обязан совпадать с чемпионом.
+        NeuroNet immigrant = kids.get(kids.size() - 1);
+        assertNotNull(immigrant);
+        assertEquals(4, immigrant.GetLayers().size());
+    }
+
+    @Test
+    public void offspringWithFitsStillProducesRequestedCount()
+    {
+        Evolution evo = new Evolution();
+        NeuroNet a = BattleUnitCommon.CreateNeuroNetUnit();
+        NeuroNet b = BattleUnitCommon.CreateNeuroNetUnit();
+        ArrayList<NeuroNet> coreNets = new ArrayList<>();
+        coreNets.add(a);
+        coreNets.add(b);
+        ArrayList<Integer> fits = new ArrayList<>();
+        fits.add(10);
+        fits.add(5);
+
+        ArrayList<NeuroNet> kids = evo.GenerateOffspring(new ArrayList<TestUnit>(), coreNets, fits, 7, null);
+        assertEquals(7, kids.size());
     }
 }

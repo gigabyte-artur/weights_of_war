@@ -1,5 +1,7 @@
 package ru.gigabyteartur.weights_of_war.neuro_net;
 
+import ru.gigabyteartur.weights_of_war.units.BattleUnitCommon;
+
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
@@ -306,4 +308,89 @@ public class NeuroNetTest
             tempFile.delete();
         }
     }
+
+    // --- Мутация: гауссово возмущение вместо замены веса ---
+
+    @Test
+    public void mutatePerturbsWeightsLocallyInsteadOfReplacingThem()
+    {
+        // Ключевое свойство: мутация ДОЛЖНА сохранять найденное, а не уничтожать его.
+        // Раньше вес заменялся случайным числом из [-1, 1] — потомок терял структуру
+        // родителя, и поиск не сходился. Теперь вес сдвигается на N(0, sigma).
+        NeuroNet net = new NeuroNet();
+        net.GenerateAddLayer(4, true, false);
+        net.GenerateAddLayer(4, false, true);
+        net.Compile();
+        for (Layer l : net.GetLayers())
+        {
+            for (Neuron n : l.GetNeurons())
+            {
+                for (Axon a : n.GetAxons())
+                {
+                    a.SetWeight(0.5);
+                }
+            }
+        }
+
+        double sigma = 0.05;
+        net.Mutate(1.0, sigma);   // мутируем все веса
+
+        int moved = 0;
+        for (Layer l : net.GetLayers())
+        {
+            for (Neuron n : l.GetNeurons())
+            {
+                for (Axon a : n.GetAxons())
+                {
+                    double w = a.GetWeight();
+                    // Сдвиг обязан быть мал: 6 сигм покрывают практически весь разброс.
+                    assertTrue(Math.abs(w - 0.5) < 6 * sigma,
+                            "вес ушёл слишком далеко от исходного: " + w);
+                    if (w != 0.5) moved++;
+                }
+            }
+        }
+        assertTrue(moved > 0, "мутация не изменила ни одного веса");
+    }
+
+    @Test
+    public void mutatePreservesStructureAndStaysWithinWeightLimit()
+    {
+        NeuroNet net = BattleUnitCommon.CreateNeuroNetUnit();
+        for (int i = 0; i < 50; i++)
+        {
+            net.Mutate(1.0, 2.0);   // намеренно большой шаг
+        }
+
+        assertEquals(4, net.GetLayers().size());
+        assertEquals(26, net.GetLayers().get(0).GetSize());
+        assertEquals(10, net.GetLayers().get(3).GetSize());
+
+        for (Layer l : net.GetLayers())
+        {
+            for (Neuron n : l.GetNeurons())
+            {
+                assertTrue(Math.abs(n.GetBias()) <= Neuron.WEIGHT_LIMIT + 1e-9,
+                        "bias вышел за предел: " + n.GetBias());
+                for (Axon a : n.GetAxons())
+                {
+                    assertTrue(Math.abs(a.GetWeight()) <= Neuron.WEIGHT_LIMIT + 1e-9,
+                            "вес вышел за предел: " + a.GetWeight());
+                }
+            }
+        }
+    }
+
+    @Test
+    public void copyStaysIndependentAfterMutation()
+    {
+        NeuroNet parent = BattleUnitCommon.CreateNeuroNetUnit();
+        NeuroNet child = parent.Copy();
+        double before = parent.GetLayers().get(1).GetNeurons().get(0).GetAxons().get(0).GetWeight();
+
+        child.Mutate(1.0, 0.5);
+
+        assertEquals(before, parent.GetLayers().get(1).GetNeurons().get(0).GetAxons().get(0).GetWeight(), 1e-12);
+    }
+
 }

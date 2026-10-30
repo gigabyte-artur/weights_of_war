@@ -6,6 +6,8 @@ import ru.gigabyteartur.weights_of_war.GameWorld;
 // Двигается на 10 пикселей в направлении текущей цели.
 public class CommandMoveToTarget extends CommandUnit
 {
+    public final static int STEP_PX = 100;   // Длина шага к цели за одно исполнение команды, px.
+
     private boolean initialized = false;
     private int targetX;
     private int targetY;
@@ -24,18 +26,21 @@ public class CommandMoveToTarget extends CommandUnit
                 return true; // цель достигнута.
             }
 
-            float distance = (float) (dx * dx + dy * dy);
+            // ВАЖНО: здесь нужно ЕВКЛИДОВО расстояние, а не его квадрат.
+            // Раньше в distance лежало dx*dx + dy*dy, поэтому шаг получался
+            // dx / (dx^2+dy^2) * 100 — доли пикселя при цели в сотнях пикселей.
+            // Юнит практически не двигался к цели.
+            float distance = (float) Math.sqrt(dx * dx + dy * dy);
 
-            // Если цель ближе 10 пикселей — двигаемся прямо к ней.
-            if (distance <= 100)
+            if (distance <= STEP_PX)
             {
                 targetX = unit.getX() + dx;
                 targetY = unit.getY() + dy;
             }
             else
             {
-                targetX = unit.getX() + Math.round((dx / distance) * 100);
-                targetY = unit.getY() + Math.round((dy / distance) * 100);
+                targetX = unit.getX() + Math.round((dx / distance) * STEP_PX);
+                targetY = unit.getY() + Math.round((dy / distance) * STEP_PX);
             }
 
             initialized = true;
