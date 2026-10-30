@@ -29,6 +29,8 @@ public abstract class BattleUnitCommon extends BattleObject
     public final static float ATTACKED_DECAY_PER_SECOND = 30f;  // Скорость затухания сигнала «под атакой», ед./сек.
     public final static float CRITICAL_HEALTH_FRACTION = 0.2f;  // Порог критического здоровья (менее 20% от максимума).
     public final static int KILL_FIT_BONUS = 100;              // Разовый бонус фитнесса за уничтожение вражеского юнита.
+    public final static float DECISION_INTERVAL_SEC = 0.25f;   // Минимальный интервал между решениями юнита, игровых секунд.
+    public final static int SENSOR_COUNT = 29;                 // Число входов сети: размер базового набора сенсоров.
 
     public enum FitType {
         DAMAGE_TO_UNITS,        // урон по юнитам.
@@ -54,6 +56,7 @@ public abstract class BattleUnitCommon extends BattleObject
     private int staleWaves = 0;                 // Сколько волн подряд фит не менялся.
     private float stuck = 0f;                   // Накопленное время застревания, сек.
     private float attacked = 0f;                // Сигнал «под атакой» (0..100, затухает со временем).
+    private float decisionCooldown = 0f;        // Сколько игровых секунд ещё нельзя принимать новое решение.
     private ArrayList<CommandUnit> commandsQueue = new ArrayList<CommandUnit>();        // очередь команд.
 
     protected float separationRadius = 30f;      // Радиус отталкивания от союзников (boids).
@@ -190,16 +193,30 @@ public abstract class BattleUnitCommon extends BattleObject
             setHealth(newHealth);
         }
 
-        // Если команд нет — автоматически добавляем команду «подумать».
-        if (commandsQueue.isEmpty())
+        // Решение — тратящийся ресурс: новое намерение берётся не чаще, чем раз в
+        // DECISION_INTERVAL_SEC игровых секунд. Раньше пустая очередь сама по себе была
+        // приглашением думать, поэтому юнит мог менять намерение каждый кадр: выбор цели
+        // (один кадр) и удар (много кадров) стоили одинаково, и обязательство не окупалось.
+        if (decisionCooldown > 0f)
         {
-            commandsQueue.add(new CommandThink(CreateSensors()));
+            decisionCooldown -= Gdx.graphics.getDeltaTime() * world.getGameSpeed();
         }
 
-        CommandUnit command = commandsQueue.get(0);
-        if (command.Execute(this, world))
+        // Если команд нет и кулдаун истёк — добавляем команду «подумать».
+        if (commandsQueue.isEmpty() && decisionCooldown <= 0f)
         {
-            commandsQueue.remove(0);
+            commandsQueue.add(new CommandThink(CreateSensors()));
+            decisionCooldown = DECISION_INTERVAL_SEC;
+        }
+
+        // Очередь может остаться пустой, пока идёт кулдаун: тогда юнит просто ничего не делает.
+        if (!commandsQueue.isEmpty())
+        {
+            CommandUnit command = commandsQueue.get(0);
+            if (command.Execute(this, world))
+            {
+                commandsQueue.remove(0);
+            }
         }
 
         // Если застрял слишком долго — сбрасываем команду и отлипаем от затора.
@@ -656,6 +673,7 @@ public abstract class BattleUnitCommon extends BattleObject
         staleWaves = 0;
         targetObject = null;
         attacked = 0f;
+        decisionCooldown = 0f;
     }
 
     // Проверяет застой: если фит не менялся maxStaleWaves волн — юнит умирает.
@@ -684,14 +702,14 @@ public abstract class BattleUnitCommon extends BattleObject
         return object.getHealth() < object.getMaxHealth() * CRITICAL_HEALTH_FRACTION;
     }
 
-    // Формирует нейронную сеть юнита: входной слой 26 нейронов,
+    // Формирует нейронную сеть юнита: входной слой 29 нейронов,
     // 2 скрытых полносвязных слоя по 20 нейронов, выходной слой 10 нейронов.
     public static NeuroNet CreateNeuroNetUnit()
     {
         NeuroNet neuroNet = new NeuroNet();
 
         // Входной слой.
-        neuroNet.GenerateAddLayer(26, true, false);
+        neuroNet.GenerateAddLayer(SENSOR_COUNT, true, false);
 
         // Скрытые полносвязные слои.
         for (int i = 0; i < 2; i++)

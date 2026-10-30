@@ -10,6 +10,14 @@
 //     gens     — поколение, на котором остановиться
 //     speed    — gameSpeed (по умолчанию 60; в headless ставят 60..1000)
 //     maxTicks — предохранитель по тикам (по умолчанию 400000)
+//     dt       — шаг кадра в секундах (по умолчанию 1/60)
+//
+// ВАЖНО про dt и gameSpeed: игровое время за тик = dt * speed. Поколение наступает
+// раз в 60 игровых секунд. При speed=60 и dt=1/60 один тик равен ЦЕЛОЙ игровой
+// секунде — любая механика короче секунды (кулдаун решения, удар, регенерация)
+// в таком прогоне выключена по построению. Мерить такие механики можно только
+// при малом gameSpeed: при speed=1 и dt=1/60 поколение стоит 3600 тиков,
+// при speed=10 — 360 тиков (тик = 1/6 секунды).
 //
 // ВАЖНО про случайность: флага seed здесь нет намеренно. В коде игры Random
 // создаётся без зерна (Neuron.Mutate, NeuroNet.RandomWeights, Evolution,
@@ -38,7 +46,9 @@ public class WorldBench
     static final int SCREEN_WIDTH = 1280;
     static final int SCREEN_HEIGHT = 720;
 
-    /** Заглушка Gdx.graphics: фиксированный размер кадра и шаг 1/60. */
+    static float frameDt = 1f / 60f;   // шаг кадра, сек (по умолчанию 1/60).
+
+    /** Заглушка Gdx.graphics: фиксированный размер кадра и заданный шаг dt. */
     static Graphics graphics()
     {
         return (Graphics) Proxy.newProxyInstance(Graphics.class.getClassLoader(),
@@ -46,7 +56,7 @@ public class WorldBench
                 String name = method.getName();
                 if (name.equals("getWidth")) return SCREEN_WIDTH;
                 if (name.equals("getHeight")) return SCREEN_HEIGHT;
-                if (name.equals("getDeltaTime")) return 1f / 60f;
+                if (name.equals("getDeltaTime")) return frameDt;
                 return defaultOf(method.getReturnType());
             });
     }
@@ -76,6 +86,7 @@ public class WorldBench
         int gens = args.length > 0 ? Integer.parseInt(args[0]) : 40;
         float speed = args.length > 1 ? Float.parseFloat(args[1]) : 60f;
         int maxTicks = args.length > 2 ? Integer.parseInt(args[2]) : 400000;
+        frameDt = args.length > 3 ? Float.parseFloat(args[3]) : 1f / 60f;
 
         GdxNativesLoader.load();
         Gdx.graphics = graphics();
@@ -93,6 +104,7 @@ public class WorldBench
         world.setGameSpeed(speed);
         world.setMaxGenerations(0);   // лимит не нужен — цикл останавливаем сами
 
+        System.out.println("# gs=" + speed + " dt=" + frameDt + " maxTicks=" + maxTicks);
         System.out.println("gen,coreSword,coreArcher,coreShield,corePriest,coreScout,alive,avgFit,maxFit,tick");
         int lastGen = -1;
         int tick = 0;

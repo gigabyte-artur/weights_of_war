@@ -19,7 +19,10 @@ public class BattleUnitCommonTest
         ArrayList<Layer> layers = net.GetLayers();
 
         assertEquals(4, layers.size());
-        assertEquals(26, layers.get(0).GetSize());
+        // Вход сети обязан совпадать с числом базовых сенсоров: иначе часть сенсоров
+        // молча не доходит до сети (CommandThink читает min(sensors, входной слой)).
+        assertEquals(BattleUnitCommon.SENSOR_COUNT, layers.get(0).GetSize());
+        assertEquals(CommandThink.CreateBaseSensors().size(), layers.get(0).GetSize());
         assertTrue(layers.get(0).GetIsInput());
         assertFalse(layers.get(0).GetIsOutput());
 
@@ -106,7 +109,8 @@ public class BattleUnitCommonTest
         ArrayList<Layer> layers = net.GetLayers();
 
         assertEquals(4, layers.size());
-        assertEquals(31, layers.get(0).GetSize());
+        // Вход жреца обязан покрывать его набор сенсоров: базовые плюс свои (5).
+        assertEquals(BattleUnitCommon.SENSOR_COUNT + UnitPriest.OWN_SENSOR_COUNT, layers.get(0).GetSize());
         assertTrue(layers.get(0).GetIsInput());
         assertFalse(layers.get(0).GetIsOutput());
 

@@ -363,7 +363,9 @@ public class NeuroNetTest
         }
 
         assertEquals(4, net.GetLayers().size());
-        assertEquals(26, net.GetLayers().get(0).GetSize());
+        // Размер входа — контракт с базовым набором сенсоров (SensorCount), а не литерал:
+        // добавление сенсора меняет структуру сети, и это должно быть видно здесь.
+        assertEquals(BattleUnitCommon.SENSOR_COUNT, net.GetLayers().get(0).GetSize());
         assertEquals(10, net.GetLayers().get(3).GetSize());
 
         for (Layer l : net.GetLayers())

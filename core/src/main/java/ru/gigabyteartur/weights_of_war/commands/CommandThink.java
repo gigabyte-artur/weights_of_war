@@ -1,5 +1,6 @@
 package ru.gigabyteartur.weights_of_war.commands;
 
+import ru.gigabyteartur.weights_of_war.BattleObject;
 import ru.gigabyteartur.weights_of_war.GameWorld;
 import ru.gigabyteartur.weights_of_war.Sensors.SensorCommon;
 import ru.gigabyteartur.weights_of_war.Sensors.SensorEnemyUp;
@@ -28,6 +29,9 @@ import ru.gigabyteartur.weights_of_war.Sensors.SensorTargetEnemyBuilding;
 import ru.gigabyteartur.weights_of_war.Sensors.SensorTargetEnemyUnit;
 import ru.gigabyteartur.weights_of_war.Sensors.SensorTargetAllyBuilding;
 import ru.gigabyteartur.weights_of_war.Sensors.SensorTargetAllyUnit;
+import ru.gigabyteartur.weights_of_war.Sensors.SensorTargetDirectionX;
+import ru.gigabyteartur.weights_of_war.Sensors.SensorTargetDirectionY;
+import ru.gigabyteartur.weights_of_war.Sensors.SensorTargetDistance;
 import ru.gigabyteartur.weights_of_war.neuro_net.Layer;
 import ru.gigabyteartur.weights_of_war.neuro_net.NeuroNet;
 import ru.gigabyteartur.weights_of_war.neuro_net.Neuron;
@@ -59,7 +63,7 @@ public class CommandThink extends CommandUnit
         this.sensors = sensors;
     }
 
-    // Создаёт базовый набор из 26 сенсоров (для обычных юнитов).
+    // Создаёт базовый набор из 29 сенсоров (для обычных юнитов).
     public static ArrayList<SensorCommon> CreateBaseSensors()
     {
         ArrayList<SensorCommon> sensors = new ArrayList<SensorCommon>();
@@ -100,6 +104,11 @@ public class CommandThink extends CommandUnit
         sensors.add(new SensorTargetEnemyUnit());
         sensors.add(new SensorTargetAllyBuilding());
         sensors.add(new SensorTargetAllyUnit());
+        // Направление и дистанция до цели: без них выход «К цели» слепой,
+        // а выбор цели (выходы 6/7) не влияет на движение.
+        sensors.add(new SensorTargetDirectionX());
+        sensors.add(new SensorTargetDirectionY());
+        sensors.add(new SensorTargetDistance());
         return sensors;
     }
 
@@ -244,7 +253,16 @@ public class CommandThink extends CommandUnit
     {
         switch (index)
         {
-            case 0: return new CommandAttackTarget(world.FindNearestEnemy(unit));
+            case 0:
+                // Атакуем выбранную цель, если она жива и видима; иначе — ближайшего врага.
+                // Раньше выбор цели (выходы 6/7) влиял только на выход 5, а атака брала
+                // ближайшего врага: подсистема выбора цели работала вхолостую.
+                BattleObject chosen = unit.getVisibleTargetObject(world);
+                if (chosen != null && !chosen.IsDead() && unit.IsEnemy(chosen))
+                {
+                    return new CommandAttackTarget(chosen);
+                }
+                return new CommandAttackTarget(world.FindNearestEnemy(unit));
             case 1: return new CommandMoveDown();
             case 2: return new CommandMoveLeft();
             case 3: return new CommandMoveUp();

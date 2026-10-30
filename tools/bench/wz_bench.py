@@ -170,13 +170,13 @@ def compile_bench(out_dir, game_classes, libs, javac):
 ROW = re.compile(r"^(\d+),")
 
 
-def run_world(classes_dir, libs, java, javac, gens, speed, max_ticks, tag):
+def run_world(classes_dir, libs, java, javac, gens, speed, max_ticks, tag, dt=1.0 / 60.0):
     bench_classes = os.path.join(BENCH_WORK, "benchclasses")
     compile_bench(bench_classes, classes_dir, libs, javac)
 
     classpath = ";".join([bench_classes, classes_dir, libs])
     result = subprocess.run([java, "-Xmx1g", "-Dfile.encoding=UTF-8", "-cp", classpath,
-                             "WorldBench", str(gens), str(speed), str(max_ticks)],
+                             "WorldBench", str(gens), str(speed), str(max_ticks), "%.9f" % dt],
                             capture_output=True, text=True, encoding="utf-8",
                             errors="replace", timeout=3600)
 
@@ -231,7 +231,7 @@ def cmd_run(args):
     classes_dir = os.path.join(BENCH_WORK, "classes_worktree")
     log("компилирую рабочее дерево")
     compile_tree(os.path.join(REPO, "core", "src", "main", "java"), classes_dir, libs, javac, "worktree")
-    rows = run_world(classes_dir, libs, java, javac, args.gens, args.speed, args.max_ticks, "run")
+    rows = run_world(classes_dir, libs, java, javac, args.gens, args.speed, args.max_ticks, "run", args.dt)
     print_run(rows)
     point = metrics(rows, args.at)
     if point:
@@ -262,7 +262,7 @@ def cmd_pair(args):
     for run_index in range(args.runs):
         for tag, classes_dir in (("BASE", base_classes), ("WORK", work_classes)):
             rows = run_world(classes_dir, libs, java, javac, args.gens, args.speed,
-                             args.max_ticks, "%s #%d" % (tag, run_index + 1))
+                             args.max_ticks, "%s #%d" % (tag, run_index + 1), args.dt)
             point = metrics(rows, args.at)
             if point:
                 results[tag].append(point)
@@ -334,6 +334,8 @@ def main():
                        help="то же, что позиционный аргумент")
         p.add_argument("--speed", type=float, default=60, help="gameSpeed (по умолчанию 60)")
         p.add_argument("--max-ticks", type=int, default=400000, help="предохранитель по тикам")
+        p.add_argument("--dt", type=float, default=1.0 / 60.0,
+                       help="шаг кадра, сек (по умолчанию 1/60); игровое время за тик = dt * speed")
         p.add_argument("--at", type=int, default=51, help="поколение для снятия метрик (по умолчанию 51)")
 
     run = sub.add_parser("run", help="один прогон рабочего дерева")

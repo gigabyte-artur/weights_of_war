@@ -166,13 +166,18 @@ public class UnitPriest extends BattleUnitCommon
         return sensors;
     }
 
-    // Формирует нейросеть жреца: вход 31, 2 скрытых полносвязных слоя по 20, выход 11.
+    // Сколько своих сенсоров жрец добавляет к базовому набору.
+    public final static int OWN_SENSOR_COUNT = 5;
+
+    // Формирует нейросеть жреца: вход = базовые сенсоры + свои, 2 скрытых слоя по 20, выход 11.
+    // Размер входа считается от набора сенсоров, а не литералом: при добавлении базового
+    // сенсора литерал молча обрезал бы последние сенсоры жреца.
     public static NeuroNet CreateNeuroNetPriest()
     {
         NeuroNet neuroNet = new NeuroNet();
 
         // Входной слой.
-        neuroNet.GenerateAddLayer(31, true, false);
+        neuroNet.GenerateAddLayer(SENSOR_COUNT + OWN_SENSOR_COUNT, true, false);
 
         // Скрытые полносвязные слои.
         for (int i = 0; i < 2; i++)
