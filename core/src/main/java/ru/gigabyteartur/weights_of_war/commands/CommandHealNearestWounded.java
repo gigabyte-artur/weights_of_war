@@ -78,6 +78,12 @@ public class CommandHealNearestWounded extends CommandUnit
         return false;
     }
 
+    @Override
+    public boolean IsPersistentOrder()
+    {
+        return true;
+    }
+
     // Название команды.
     @Override
     public String GetName()

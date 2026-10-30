@@ -32,6 +32,15 @@ public abstract class CommandMoveDirection extends CommandUnit
 
         unit.setTarget(targetX, targetY);
         unit.MoveToTarget(world);
+        // Шаг сделан — команда завершается, и живой приказ тут же выдаёт следующий шаг
+        // в том же направлении. Так «Вверх» остаётся курсом на 5..10 секунд, а не
+        // одним рывком на 30 px.
         return unit.getX() == targetX && unit.getY() == targetY;
+    }
+
+    @Override
+    public boolean IsPersistentOrder()
+    {
+        return true;
     }
 }

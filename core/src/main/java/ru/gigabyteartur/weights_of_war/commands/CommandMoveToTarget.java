@@ -1,5 +1,6 @@
 package ru.gigabyteartur.weights_of_war.commands;
 
+import ru.gigabyteartur.weights_of_war.BattleObject;
 import ru.gigabyteartur.weights_of_war.units.BattleUnitCommon;
 import ru.gigabyteartur.weights_of_war.GameWorld;
 
@@ -49,6 +50,24 @@ public class CommandMoveToTarget extends CommandUnit
         unit.setTarget(targetX, targetY);
         unit.MoveToTarget(world);
         return unit.getX() == targetX && unit.getY() == targetY;
+    }
+
+    @Override
+    public boolean IsPersistentOrder()
+    {
+        return true;
+    }
+
+    // Цель приказа могла сдвинуться: переиздавая «К цели», берём её текущие координаты,
+    // иначе юнит шёл бы в точку, где враг стоял десять секунд назад.
+    @Override
+    public void OnOrderRepeat(BattleUnitCommon unit, GameWorld world)
+    {
+        BattleObject goal = unit.getVisibleTargetObject(world);
+        if (goal != null)
+        {
+            unit.setTarget(goal.getX(), goal.getY());
+        }
     }
 
     // Название команды.

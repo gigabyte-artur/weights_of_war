@@ -147,6 +147,9 @@ public class CommandThink extends CommandUnit
         CommandUnit command = CreateCommand(bestIndex, unit, world);
         if (command != null)
         {
+            // Решение становится приказом со сроком жизни: команда не «выполнилась и забылась»,
+            // а исполняется, пока не истечёт срок или событие не потребует нового решения.
+            unit.BeginOrder(bestIndex, command);
             unit.AddCommand(command);
         }
 
@@ -249,7 +252,8 @@ public class CommandThink extends CommandUnit
     }
 
     // Создаёт команду по индексу выходного нейрона.
-    private CommandUnit CreateCommand(int index, BattleUnitCommon unit, GameWorld world)
+    // Открыт для юнита: живой приказ переиздаёт ту же команду, не спрашивая сеть заново.
+    public static CommandUnit CreateCommand(int index, BattleUnitCommon unit, GameWorld world)
     {
         switch (index)
         {
@@ -258,11 +262,18 @@ public class CommandThink extends CommandUnit
                 // Раньше выбор цели (выходы 6/7) влиял только на выход 5, а атака брала
                 // ближайшего врага: подсистема выбора цели работала вхолостую.
                 BattleObject chosen = unit.getVisibleTargetObject(world);
-                if (chosen != null && !chosen.IsDead() && unit.IsEnemy(chosen))
+                if (chosen == null || chosen.IsDead() || !unit.IsEnemy(chosen))
                 {
-                    return new CommandAttackTarget(chosen);
+                    chosen = world.FindNearestEnemy(unit);
                 }
-                return new CommandAttackTarget(world.FindNearestEnemy(unit));
+                if (chosen != null)
+                {
+                    // Цель боя становится объектом-целью юнита: сенсоры (здоровье, тип,
+                    // направление) должны видеть то, что юнит действительно атакует, а
+                    // прерывание приказа — ту же цель, а не прошлую.
+                    unit.setTargetObject(chosen);
+                }
+                return new CommandAttackTarget(chosen);
             case 1: return new CommandMoveDown();
             case 2: return new CommandMoveLeft();
             case 3: return new CommandMoveUp();

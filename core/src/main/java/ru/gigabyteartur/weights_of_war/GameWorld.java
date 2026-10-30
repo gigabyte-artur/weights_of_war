@@ -412,6 +412,38 @@ public class GameWorld {
         return nearest;
     }
 
+    // Находит ближайшего живого врага, видимого фракции, если до него не дальше radius.
+    // Нужен прерыванию приказа: враг в радиусе удара важнее выбранного курса. Отдельный
+    // метод, а не FindNearestEnemy, потому что тот обходит весь мир и возвращает дальнего.
+    public BattleObject FindNearestEnemyWithin(BattleUnitCommon unit, int radius)
+    {
+        BattleObject nearest = null;
+        float nearestDistance = radius;
+        for (PlacedObject object : units)
+        {
+            if (object == unit || !(object instanceof BattleObject) || object.IsDead())
+            {
+                continue;
+            }
+            BattleObject candidate = (BattleObject) object;
+            if (unit.getFraction() == null || candidate.getFraction() == null || !unit.IsEnemy(candidate))
+            {
+                continue;
+            }
+            if (!fogOfWar.IsVisible(unit.getFraction(), candidate))
+            {
+                continue;
+            }
+            float distance = unit.GetDistance(candidate);
+            if (distance <= nearestDistance)
+            {
+                nearestDistance = distance;
+                nearest = candidate;
+            }
+        }
+        return nearest;
+    }
+
     // Находит ближайшее живое здание противника (другой фракции), видимое фракции юнита.
     // Возвращает null, если таких зданий нет.
     public BattleBuildingCommon FindNearestEnemyBuilding(BattleUnitCommon unit)

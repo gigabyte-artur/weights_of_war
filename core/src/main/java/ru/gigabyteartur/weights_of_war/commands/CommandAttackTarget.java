@@ -166,6 +166,12 @@ public class CommandAttackTarget extends CommandUnit
         unit.setTarget(standoffX, standoffY);
     }
 
+    @Override
+    public boolean IsPersistentOrder()
+    {
+        return true;
+    }
+
     // Название команды.
     @Override
     public String GetName()

@@ -50,6 +50,20 @@ public class CommandMoveToOwnCore extends CommandUnit
         return unit.getX() == targetX && unit.getY() == targetY;
     }
 
+    @Override
+    public boolean IsPersistentOrder()
+    {
+        return true;
+    }
+
+    // Ядро стоит на месте, но шаг в 10 px завершается быстро: без переиздания
+    // «К ядру» жило бы один шаг и юнит тут же думал заново.
+    @Override
+    public void OnOrderRepeat(BattleUnitCommon unit, GameWorld world)
+    {
+        initialized = false;
+    }
+
     // Название команды.
     @Override
     public String GetName()

@@ -1,0 +1,780 @@
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/GameWorld.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/GameWorld.java
+index 56b272c..79b1aba 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/GameWorld.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/GameWorld.java
+@@ -412,6 +412,38 @@ public class GameWorld {
+         return nearest;
+     }
+ 
++    // Находит ближайшего живого врага, видимого фракции, если до него не дальше radius.
++    // Нужен прерыванию приказа: враг в радиусе удара важнее выбранного курса. Отдельный
++    // метод, а не FindNearestEnemy, потому что тот обходит весь мир и возвращает дальнего.
++    public BattleObject FindNearestEnemyWithin(BattleUnitCommon unit, int radius)
++    {
++        BattleObject nearest = null;
++        float nearestDistance = radius;
++        for (PlacedObject object : units)
++        {
++            if (object == unit || !(object instanceof BattleObject) || object.IsDead())
++            {
++                continue;
++            }
++            BattleObject candidate = (BattleObject) object;
++            if (unit.getFraction() == null || candidate.getFraction() == null || !unit.IsEnemy(candidate))
++            {
++                continue;
++            }
++            if (!fogOfWar.IsVisible(unit.getFraction(), candidate))
++            {
++                continue;
++            }
++            float distance = unit.GetDistance(candidate);
++            if (distance <= nearestDistance)
++            {
++                nearestDistance = distance;
++                nearest = candidate;
++            }
++        }
++        return nearest;
++    }
++
+     // Находит ближайшее живое здание противника (другой фракции), видимое фракции юнита.
+     // Возвращает null, если таких зданий нет.
+     public BattleBuildingCommon FindNearestEnemyBuilding(BattleUnitCommon unit)
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandAttackTarget.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandAttackTarget.java
+index 7dde627..b338a9d 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandAttackTarget.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandAttackTarget.java
+@@ -166,6 +166,12 @@ public class CommandAttackTarget extends CommandUnit
+         unit.setTarget(standoffX, standoffY);
+     }
+ 
++    @Override
++    public boolean IsPersistentOrder()
++    {
++        return true;
++    }
++
+     // Название команды.
+     @Override
+     public String GetName()
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandHealNearestWounded.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandHealNearestWounded.java
+index 49125d4..7449f4a 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandHealNearestWounded.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandHealNearestWounded.java
+@@ -78,6 +78,12 @@ public class CommandHealNearestWounded extends CommandUnit
+         return false;
+     }
+ 
++    @Override
++    public boolean IsPersistentOrder()
++    {
++        return true;
++    }
++
+     // Название команды.
+     @Override
+     public String GetName()
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandMoveDirection.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandMoveDirection.java
+index 6c1c4bc..c4d0bb3 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandMoveDirection.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandMoveDirection.java
+@@ -32,6 +32,15 @@ public abstract class CommandMoveDirection extends CommandUnit
+ 
+         unit.setTarget(targetX, targetY);
+         unit.MoveToTarget(world);
++        // Шаг сделан — команда завершается, и живой приказ тут же выдаёт следующий шаг
++        // в том же направлении. Так «Вверх» остаётся курсом на 5..10 секунд, а не
++        // одним рывком на 30 px.
+         return unit.getX() == targetX && unit.getY() == targetY;
+     }
++
++    @Override
++    public boolean IsPersistentOrder()
++    {
++        return true;
++    }
+ }
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandMoveToOwnCore.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandMoveToOwnCore.java
+index f2e3ab4..e179e7f 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandMoveToOwnCore.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandMoveToOwnCore.java
+@@ -50,6 +50,20 @@ public class CommandMoveToOwnCore extends CommandUnit
+         return unit.getX() == targetX && unit.getY() == targetY;
+     }
+ 
++    @Override
++    public boolean IsPersistentOrder()
++    {
++        return true;
++    }
++
++    // Ядро стоит на месте, но шаг в 10 px завершается быстро: без переиздания
++    // «К ядру» жило бы один шаг и юнит тут же думал заново.
++    @Override
++    public void OnOrderRepeat(BattleUnitCommon unit, GameWorld world)
++    {
++        initialized = false;
++    }
++
+     // Название команды.
+     @Override
+     public String GetName()
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandMoveToTarget.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandMoveToTarget.java
+index bfa82b7..41997c5 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandMoveToTarget.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandMoveToTarget.java
+@@ -1,5 +1,6 @@
+ package ru.gigabyteartur.weights_of_war.commands;
+ 
++import ru.gigabyteartur.weights_of_war.BattleObject;
+ import ru.gigabyteartur.weights_of_war.units.BattleUnitCommon;
+ import ru.gigabyteartur.weights_of_war.GameWorld;
+ 
+@@ -51,6 +52,24 @@ public class CommandMoveToTarget extends CommandUnit
+         return unit.getX() == targetX && unit.getY() == targetY;
+     }
+ 
++    @Override
++    public boolean IsPersistentOrder()
++    {
++        return true;
++    }
++
++    // Цель приказа могла сдвинуться: переиздавая «К цели», берём её текущие координаты,
++    // иначе юнит шёл бы в точку, где враг стоял десять секунд назад.
++    @Override
++    public void OnOrderRepeat(BattleUnitCommon unit, GameWorld world)
++    {
++        BattleObject goal = unit.getVisibleTargetObject(world);
++        if (goal != null)
++        {
++            unit.setTarget(goal.getX(), goal.getY());
++        }
++    }
++
+     // Название команды.
+     @Override
+     public String GetName()
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandThink.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandThink.java
+index 6d3a35b..f5680e5 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandThink.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandThink.java
+@@ -147,6 +147,9 @@ public class CommandThink extends CommandUnit
+         CommandUnit command = CreateCommand(bestIndex, unit, world);
+         if (command != null)
+         {
++            // Решение становится приказом со сроком жизни: команда не «выполнилась и забылась»,
++            // а исполняется, пока не истечёт срок или событие не потребует нового решения.
++            unit.BeginOrder(bestIndex, command);
+             unit.AddCommand(command);
+         }
+ 
+@@ -249,7 +252,8 @@ public class CommandThink extends CommandUnit
+     }
+ 
+     // Создаёт команду по индексу выходного нейрона.
+-    private CommandUnit CreateCommand(int index, BattleUnitCommon unit, GameWorld world)
++    // Открыт для юнита: живой приказ переиздаёт ту же команду, не спрашивая сеть заново.
++    public static CommandUnit CreateCommand(int index, BattleUnitCommon unit, GameWorld world)
+     {
+         switch (index)
+         {
+@@ -258,11 +262,18 @@ public class CommandThink extends CommandUnit
+                 // Раньше выбор цели (выходы 6/7) влиял только на выход 5, а атака брала
+                 // ближайшего врага: подсистема выбора цели работала вхолостую.
+                 BattleObject chosen = unit.getVisibleTargetObject(world);
+-                if (chosen != null && !chosen.IsDead() && unit.IsEnemy(chosen))
++                if (chosen == null || chosen.IsDead() || !unit.IsEnemy(chosen))
+                 {
+-                    return new CommandAttackTarget(chosen);
++                    chosen = world.FindNearestEnemy(unit);
+                 }
+-                return new CommandAttackTarget(world.FindNearestEnemy(unit));
++                if (chosen != null)
++                {
++                    // Цель боя становится объектом-целью юнита: сенсоры (здоровье, тип,
++                    // направление) должны видеть то, что юнит действительно атакует, а
++                    // прерывание приказа — ту же цель, а не прошлую.
++                    unit.setTargetObject(chosen);
++                }
++                return new CommandAttackTarget(chosen);
+             case 1: return new CommandMoveDown();
+             case 2: return new CommandMoveLeft();
+             case 3: return new CommandMoveUp();
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandUnit.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandUnit.java
+index d19590e..5ffd5a1 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandUnit.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/commands/CommandUnit.java
+@@ -14,4 +14,20 @@ public abstract class CommandUnit
+     {
+         return getClass().getSimpleName();
+     }
++
++    // Может ли эта команда быть приказом — намерением, которое живёт ORDER_MIN_SEC..ORDER_MAX_SEC
++    // и переиздаётся, пока приказ не сменится или не будет прерван событием.
++    //
++    // По умолчанию false: разовая команда (выбор цели, лечение) не должна растягиваться
++    // на десять секунд. Подклассы, у которых есть смысл «держать курс», переопределяют.
++    public boolean IsPersistentOrder()
++    {
++        return false;
++    }
++
++    // Вызывается, когда живой приказ переиздаёт эту команду: команда может обновить
++    // свою точку, если её цель сдвинулась (погоня за движущимся врагом).
++    public void OnOrderRepeat(BattleUnitCommon unit, GameWorld world)
++    {
++    }
+ }
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommon.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommon.java
+index efe60e2..58dd504 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommon.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommon.java
+@@ -36,6 +36,15 @@ public abstract class BattleUnitCommon extends BattleObject
+     // прошлого решения, то есть даёт сети состояние между вызовами.
+     public final static int MEMORY_COUNT = 8;
+ 
++    // Приказ — намерение с запасом времени. Раньше «команда» жила 0.25 игровых секунд,
++    // поэтому сеть не могла связать своё решение с последствиями: выбор цели и удар
++    // стоили одинаково, а событие на поле боя не успевало стать причиной смены курса.
++    // Теперь выбранное действие живёт ORDER_MIN_SEC..ORDER_MAX_SEC игровых секунд, а
++    // меняется только по событию: бьют, цель пропала, враг вошёл в радиус атаки.
++    public final static float ORDER_MIN_SEC = 5f;                // Минимальный срок приказа, игровых секунд.
++    public final static float ORDER_MAX_SEC = 10f;               // Максимальный срок приказа, игровых секунд.
++    public final static float ORDER_INTERRUPT_ATTACKED = 50f;    // Порог «меня бьют», при котором приказ прерывается.
++
+     // Срок жизни юнита: застой — это долг, а не приговор.
+     //   * каждая волна без прогресса добавляет к долгу одну волну;
+     //   * заработанный фит гасит долг: STAGNATION_FIT_PER_WAVE фита = одна волна;
+@@ -72,6 +81,11 @@ public abstract class BattleUnitCommon extends BattleObject
+     private float stuck = 0f;                   // Накопленное время застревания, сек.
+     private float attacked = 0f;                // Сигнал «под атакой» (0..100, затухает со временем).
+     private float decisionCooldown = 0f;        // Сколько игровых секунд ещё нельзя принимать новое решение.
++    private int orderIndex = -1;                // Выходной нейрон, которым выбран действующий приказ (-1 = приказа нет).
++    private float orderRemaining = 0f;          // Сколько игровых секунд приказ ещё жив.
++    private float threatScanCooldown = 0f;      // Через сколько игровых секунд снова проверить врага рядом.
++    private boolean attackedInterruptSpent = false;  // Прерывание по удару уже израсходовано до затухания сигнала.
++    private BattleObject closeEnemy = null;     // Враг, из-за которого приказ уже прерывали (чтобы не прерывать каждый тик).
+     private ArrayList<CommandUnit> commandsQueue = new ArrayList<CommandUnit>();        // очередь команд.
+ 
+     protected float separationRadius = 30f;      // Радиус отталкивания от союзников (boids).
+@@ -208,20 +222,58 @@ public abstract class BattleUnitCommon extends BattleObject
+             setHealth(newHealth);
+         }
+ 
++        float delta = Gdx.graphics.getDeltaTime() * world.getGameSpeed();
++
+         // Решение — тратящийся ресурс: новое намерение берётся не чаще, чем раз в
+         // DECISION_INTERVAL_SEC игровых секунд. Раньше пустая очередь сама по себе была
+         // приглашением думать, поэтому юнит мог менять намерение каждый кадр: выбор цели
+         // (один кадр) и удар (много кадров) стоили одинаково, и обязательство не окупалось.
+         if (decisionCooldown > 0f)
+         {
+-            decisionCooldown -= Gdx.graphics.getDeltaTime() * world.getGameSpeed();
++            decisionCooldown -= delta;
++        }
++
++        // Срок приказа тикает в игровых секундах — так же, как кулдаун решения.
++        if (orderRemaining > 0f)
++        {
++            orderRemaining -= delta;
++        }
++        if (threatScanCooldown > 0f)
++        {
++            threatScanCooldown -= delta;
+         }
+ 
+-        // Если команд нет и кулдаун истёк — добавляем команду «подумать».
+-        if (commandsQueue.isEmpty() && decisionCooldown <= 0f)
++        // Событие важнее расписания: если приказ перестал соответствовать полю боя,
++        // остаток срока сгорает и юнит думает заново.
++        if (orderIndex >= 0 && OrderInterrupted(world))
+         {
+-            commandsQueue.add(new CommandThink(CreateSensors()));
+-            decisionCooldown = DECISION_INTERVAL_SEC;
++            ClearCommands();
++            EndOrder();
++        }
++
++        if (commandsQueue.isEmpty())
++        {
++            if (orderIndex >= 0 && orderRemaining > 0f)
++            {
++                // Приказ жив, а конкретная команда исчерпалась: переиздаём ту же команду
++                // (следующие 30 px, следующий шаг к цели), не спрашивая сеть заново.
++                CommandUnit repeated = CommandThink.CreateCommand(orderIndex, this, world);
++                if (repeated == null || !repeated.IsPersistentOrder())
++                {
++                    EndOrder();
++                }
++                else
++                {
++                    repeated.OnOrderRepeat(this, world);
++                    commandsQueue.add(repeated);
++                }
++            }
++            else if (decisionCooldown <= 0f)
++            {
++                // Если команд нет и кулдаун истёк — добавляем команду «подумать».
++                commandsQueue.add(new CommandThink(CreateSensors()));
++                decisionCooldown = DECISION_INTERVAL_SEC;
++            }
+         }
+ 
+         // Очередь может остаться пустой, пока идёт кулдаун: тогда юнит просто ничего не делает.
+@@ -238,6 +290,7 @@ public abstract class BattleUnitCommon extends BattleObject
+         if (stuck > STUCK_THRESHOLD)
+         {
+             ClearCommands();
++            EndOrder();
+             AddCommand(EscapeCommand(world));
+             stuck = 0f;
+         }
+@@ -246,6 +299,108 @@ public abstract class BattleUnitCommon extends BattleObject
+         attacked = Math.max(0f, attacked - ATTACKED_DECAY_PER_SECOND * Gdx.graphics.getDeltaTime() * world.getGameSpeed());
+     }
+ 
++    // Начинает приказ: запоминает, каким выходом сети он выбран, и назначает срок.
++    // Разовые команды (выбор цели) приказом не становятся — иначе юнит «обязался»
++    // выбирать цель на десять секунд и просто стоял.
++    public void BeginOrder(int index, CommandUnit command)
++    {
++        if (command != null && command.IsPersistentOrder())
++        {
++            orderIndex = index;
++            orderRemaining = ORDER_MIN_SEC + (float) Math.random() * (ORDER_MAX_SEC - ORDER_MIN_SEC);
++        }
++        else
++        {
++            EndOrder();
++        }
++    }
++
++    // Снимает приказ: следующий тик с пустой очередью снова спросит сеть.
++    public void EndOrder()
++    {
++        orderIndex = -1;
++        orderRemaining = 0f;
++        threatScanCooldown = 0f;
++    }
++
++    // Жив ли сейчас приказ.
++    public boolean hasActiveOrder()
++    {
++        return orderIndex >= 0 && orderRemaining > 0f;
++    }
++
++    // Сколько игровых секунд ещё нельзя принимать новое решение (для тестов).
++    public float getDecisionCooldown()
++    {
++        return decisionCooldown;
++    }
++
++    // Индекс выходного нейрона действующего приказа (-1, если приказа нет).
++    public int getOrderIndex()
++    {
++        return orderIndex;
++    }
++
++    // Сколько игровых секунд приказу осталось жить.
++    public float getOrderRemaining()
++    {
++        return orderRemaining;
++    }
++
++    // Прерывания приказа: события, ради которых стоит сжечь остаток срока.
++    // Проверки дешёвые (кроме поиска врага в радиусе атаки — он идёт не чаще
++    // кулдауна решения, то есть с той же частотой, с какой раньше жили сенсоры).
++    private boolean OrderInterrupted(GameWorld world)
++    {
++        if (orderRemaining <= 0f)
++        {
++            return true;
++        }
++        // Юнита бьют — обстоятельство важнее выбранного курса. Прерываем ОДИН раз
++        // на удар: сигнал «под атакой» затухает несколько секунд, и без этого флага
++        // приказ сгорал бы каждый тик, пока юнит под огнём, — то есть новый приказ
++        // жил бы не дольше старого кадра.
++        if (attacked >= ORDER_INTERRUPT_ATTACKED && !attackedInterruptSpent)
++        {
++            attackedInterruptSpent = true;
++            return true;
++        }
++        if (attacked < ORDER_INTERRUPT_ATTACKED)
++        {
++            attackedInterruptSpent = false;
++        }
++        if (orderIndex == CommandThink.NEURON_ATTACK_TARGET)
++        {
++            // Цель приказа умерла или ушла в туман — атаковать больше некого.
++            return getVisibleTargetObject(world) == null;
++        }
++        // Приказ не про атаку, а враг уже в радиусе удара. Обход мира стоит дорого,
++        // поэтому проверка идёт не чаще DECISION_INTERVAL_SEC — реакция на событие,
++        // а не сенсор каждый кадр.
++        if (threatScanCooldown > 0f)
++        {
++            return false;
++        }
++        threatScanCooldown = DECISION_INTERVAL_SEC;
++
++        BattleObject enemy = world.FindNearestEnemyWithin(this, attackRange);
++        if (enemy == null)
++        {
++            // Угроза ушла: следующий подошедший враг снова заслуживает реакции.
++            closeEnemy = null;
++            return false;
++        }
++        if (enemy == closeEnemy)
++        {
++            // На этого врага уже отреагировали. Без этой памяти юнит, которому сеть
++            // велела идти, стоял бы рядом с врагом и «решал» каждые 0.25 с — приказ
++            // сгорал бы быстрее, чем успевал что-то сделать.
++            return false;
++        }
++        closeEnemy = enemy;
++        return true;
++    }
++
+     // Возвращает команду «отлипания» от затора: уход по вектору отталкивания от союзников (или случайно, если соседей нет).
+     private CommandUnit EscapeCommand(GameWorld world)
+     {
+@@ -689,6 +844,11 @@ public abstract class BattleUnitCommon extends BattleObject
+         targetObject = null;
+         attacked = 0f;
+         decisionCooldown = 0f;
++        orderIndex = -1;
++        orderRemaining = 0f;
++        threatScanCooldown = 0f;
++        attackedInterruptSpent = false;
++        closeEnemy = null;
+     }
+ 
+     // Продвигает долг застоя на одну волну. О смерти решает долг, а не факт
+diff --git a/core/src/test/java/ru/gigabyteartur/weights_of_war/units/DecisionCooldownTest.java b/core/src/test/java/ru/gigabyteartur/weights_of_war/units/DecisionCooldownTest.java
+index 6979cb8..2ff369f 100644
+--- a/core/src/test/java/ru/gigabyteartur/weights_of_war/units/DecisionCooldownTest.java
++++ b/core/src/test/java/ru/gigabyteartur/weights_of_war/units/DecisionCooldownTest.java
+@@ -4,21 +4,29 @@ import com.badlogic.gdx.Gdx;
+ import org.junit.jupiter.api.BeforeEach;
+ import org.junit.jupiter.api.Test;
+ import ru.gigabyteartur.weights_of_war.GameWorld;
++import ru.gigabyteartur.weights_of_war.commands.CommandAttackTarget;
++import ru.gigabyteartur.weights_of_war.commands.CommandMove;
++import ru.gigabyteartur.weights_of_war.commands.CommandMoveUp;
++import ru.gigabyteartur.weights_of_war.commands.CommandTargetNearestEnemy;
++import ru.gigabyteartur.weights_of_war.commands.CommandUnit;
+ import ru.gigabyteartur.weights_of_war.testutil.TestUnit;
+ 
+ import java.lang.reflect.Proxy;
+ 
+ import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertSame;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
+ /**
+- * Решение юнита — тратящийся ресурс, а не бесплатное действие каждый кадр.
++ * Решение юнита — тратящийся ресурс, а выбранное действие — приказ со сроком жизни.
+  * <p>
+  * Раньше пустая очередь команд сама была приглашением думать: юнит мог сменить
+  * намерение каждый кадр, поэтому «выбрать цель» (один кадр) и «ударить» (много
+  * кадров) стоили одинаково, и обязательство никогда не окупалось. Теперь новое
+- * решение берётся не чаще, чем раз в {@link BattleUnitCommon#DECISION_INTERVAL_SEC}
+- * игровых секунд.
++ * решение берётся не чаще {@link BattleUnitCommon#DECISION_INTERVAL_SEC}, а само
++ * действие живёт {@link BattleUnitCommon#ORDER_MIN_SEC}..{@link BattleUnitCommon#ORDER_MAX_SEC}
++ * игровых секунд и меняется только по событию (бьют, цель пропала, враг в радиусе удара).
+  */
+ public class DecisionCooldownTest
+ {
+@@ -46,6 +54,23 @@ public class DecisionCooldownTest
+                 });
+     }
+ 
++    // Приказ, который ничего не делает и никогда не завершается: проверяем сам срок,
++    // не завися от геометрии мира и от того, куда пойдёт конкретная команда.
++    private static class CommandHoldOrder extends CommandUnit
++    {
++        @Override
++        public boolean Execute(BattleUnitCommon unit, GameWorld world)
++        {
++            return false;
++        }
++
++        @Override
++        public boolean IsPersistentOrder()
++        {
++            return true;
++        }
++    }
++
+     @Test
+     public void freshUnitCannotDecideTwiceInOneTick()
+     {
+@@ -55,14 +80,14 @@ public class DecisionCooldownTest
+ 
+         unit.setNeuroNet(BattleUnitCommon.CreateNeuroNetUnit());
+         unit.Update(world);
+-        // Первый тик: решение взято, очередь непуста.
+-        assertTrue(unit.getCommandsQueueSize() > 0, "первое решение должно появиться сразу");
++        // Первый тик: решение взято — кулдаун взведён на полный интервал.
++        float afterFirst = unit.getDecisionCooldown();
++        assertTrue(afterFirst > 0f, "первое решение взводит кулдаун, было " + afterFirst);
+ 
+-        unit.ClearCommands();
+         unit.Update(world);
+-        // Второй тик: кулдаун ещё не истёк, нового решения быть не должно.
+-        assertEquals(0, unit.getCommandsQueueSize(),
+-                "в пределах кулдауна юнит не берёт новое решение");
++        // Второй тик: кулдаун только убывает, но нового решения не даёт.
++        assertTrue(unit.getDecisionCooldown() < afterFirst, "кулдаун обязан тикать");
++        assertTrue(unit.getDecisionCooldown() > 0f, "за один кадр интервал не истекает");
+     }
+ 
+     @Test
+@@ -72,51 +97,224 @@ public class DecisionCooldownTest
+         GameWorld world = new GameWorld();
+         world.setGameSpeed(1f);
+ 
+-        unit.setNeuroNet(BattleUnitCommon.CreateNeuroNetUnit());
+-        unit.Update(world);
+-        unit.ClearCommands();
+-
+-        // Ждём чуть больше интервала: кадров нужно больше, чем тиков в интервале.
++        // Кулдаун, взведённый решением, наблюдается как скачок вверх: сама величина
++        // до нуля не доходит — как только она истекает, следующее решение взводит её заново.
++        float previous = unit.getDecisionCooldown();
++        int decisions = 0;
+         int framesPerSecond = Math.round(1f / DT);
+-        int frames = (int) Math.ceil(BattleUnitCommon.DECISION_INTERVAL_SEC * framesPerSecond) + 2;
++        int frames = (int) Math.ceil(BattleUnitCommon.DECISION_INTERVAL_SEC * framesPerSecond) + 4;
+         for (int i = 0; i < frames; i++)
+         {
+             unit.Update(world);
+-            if (unit.getCommandsQueueSize() > 0)
++            if (unit.getDecisionCooldown() > previous)
+             {
+-                return;
++                decisions++;
+             }
++            previous = unit.getDecisionCooldown();
+         }
+-        assertTrue(false, "через " + frames + " кадров кулдаун обязан истечь и решение — появиться");
++        assertTrue(decisions >= 2,
++                "через " + frames + " кадров юнит обязан решить повторно, решений было " + decisions);
+     }
+ 
+     @Test
+     public void cooldownScalesWithGameSpeed()
+     {
+         // При gameSpeed 10 игровое время идёт в десять раз быстрее,
+-        // поэтому решение восстанавливается в десять раз меньшим числом кадров.
++        // поэтому интервал истекает в десять раз меньшим числом кадров.
+         TestUnit unit = new TestUnit(0, 0);
+         GameWorld world = new GameWorld();
+         world.setGameSpeed(10f);
+-
+         unit.setNeuroNet(BattleUnitCommon.CreateNeuroNetUnit());
+-        unit.Update(world);
+-        unit.ClearCommands();
+ 
++        unit.Update(world);
++        int framesAtSpeedOne = (int) Math.ceil(BattleUnitCommon.DECISION_INTERVAL_SEC / DT);
+         int framesNeeded = 0;
+         int limit = Math.round(1f / DT) * 2;
+-        while (framesNeeded < limit)
++        while (framesNeeded < limit && unit.getDecisionCooldown() > 0f)
+         {
+             unit.Update(world);
+             framesNeeded++;
+-            if (unit.getCommandsQueueSize() > 0)
+-            {
+-                break;
+-            }
+         }
+-        int framesAtSpeedOne = (int) Math.ceil(BattleUnitCommon.DECISION_INTERVAL_SEC / DT);
+         assertTrue(framesNeeded < framesAtSpeedOne,
+                 "при gameSpeed 10 кулдаун истекает быстрее по кадрам: было " + framesNeeded
+                         + ", при gameSpeed 1 нужно " + framesAtSpeedOne);
+     }
++
++    @Test
++    public void persistentCommandBecomesOrderWithLifetime()
++    {
++        TestUnit unit = new TestUnit(0, 0);
++        GameWorld world = new GameWorld();
++        world.setGameSpeed(1f);
++
++        unit.BeginOrder(3, new CommandMoveUp());
++        assertTrue(unit.hasActiveOrder(), "движение — приказ, а не разовое действие");
++        assertEquals(3, unit.getOrderIndex());
++        assertTrue(unit.getOrderRemaining() >= BattleUnitCommon.ORDER_MIN_SEC - 1e-4f);
++        assertTrue(unit.getOrderRemaining() <= BattleUnitCommon.ORDER_MAX_SEC + 1e-4f);
++    }
++
++    @Test
++    public void oneShotCommandIsNotAnOrder()
++    {
++        TestUnit unit = new TestUnit(0, 0);
++
++        // Выбор цели — разовая команда: «обязаться» выбирать цель на десять секунд нельзя,
++        // иначе юнит простоит весь срок.
++        unit.BeginOrder(6, new CommandTargetNearestEnemy());
++        assertFalse(unit.hasActiveOrder(), "выбор цели не должен становиться приказом");
++        assertEquals(-1, unit.getOrderIndex());
++    }
++
++    @Test
++    public void orderSurvivesManyTicksAndReissuesItsCommand()
++    {
++        TestUnit unit = new TestUnit(0, 0);
++        GameWorld world = new GameWorld();
++        world.setGameSpeed(1f);
++
++        CommandHoldOrder command = new CommandHoldOrder();
++        unit.BeginOrder(5, command);
++        unit.AddCommand(command);
++
++        for (int i = 0; i < 60; i++)
++        {
++            unit.Update(world);
++        }
++        assertTrue(unit.hasActiveOrder(), "приказ живёт секунды, а не один тик");
++        assertEquals(5, unit.getOrderIndex(), "сеть не спрашивают заново, пока приказ жив");
++        assertSame(command, unit.GetCurrentCommand(),
++                "исполняющаяся команда не пересоздаётся, пока не завершится");
++    }
++
++    @Test
++    public void orderExpiresAndUnitDecidesAgain()
++    {
++        TestUnit unit = new TestUnit(0, 0);
++        GameWorld world = new GameWorld();
++        // 1/6 игровой секунды за кадр: десять игровых секунд укладываются в 60 кадров.
++        world.setGameSpeed(10f);
++
++        CommandHoldOrder command = new CommandHoldOrder();
++        unit.BeginOrder(5, command);
++        unit.AddCommand(command);
++
++        int ticks = (int) Math.ceil(BattleUnitCommon.ORDER_MAX_SEC * 6f) + 2;
++        for (int i = 0; i < ticks; i++)
++        {
++            unit.Update(world);
++        }
++        assertFalse(unit.hasActiveOrder(), "срок приказа истекает сам");
++    }
++
++    @Test
++    public void beingAttackedInterruptsOrder()
++    {
++        TestUnit unit = new TestUnit(0, 0);
++        GameWorld world = new GameWorld();
++        world.setGameSpeed(1f);
++
++        CommandHoldOrder command = new CommandHoldOrder();
++        unit.BeginOrder(5, command);
++        unit.AddCommand(command);
++        unit.Update(world);
++        assertTrue(unit.hasActiveOrder());
++
++        // Юнита ударили — держать прежний курс больше нельзя.
++        unit.MarkAttacked();
++        unit.Update(world);
++        assertFalse(unit.hasActiveOrder(), "под атакой приказ прерывается");
++    }
++
++    @Test
++    public void beingAttackedInterruptsOnlyOnceWhileSignalDecays()
++    {
++        // Сигнал «под атакой» затухает несколько секунд; если прерывать на каждом тике,
++        // новый приказ живёт ровно один кадр и приказ как механизм исчезает.
++        TestUnit unit = new TestUnit(0, 0);
++        GameWorld world = new GameWorld();
++        world.setGameSpeed(1f);
++
++        CommandHoldOrder command = new CommandHoldOrder();
++        unit.BeginOrder(5, command);
++        unit.AddCommand(command);
++        unit.MarkAttacked();
++        unit.Update(world);
++        assertFalse(unit.hasActiveOrder(), "первый удар прерывает приказ");
++
++        // Новый приказ под тем же затухающим сигналом обязан выжить.
++        CommandHoldOrder second = new CommandHoldOrder();
++        unit.BeginOrder(5, second);
++        unit.AddCommand(second);
++        assertTrue(unit.getAttacked() > BattleUnitCommon.ORDER_INTERRUPT_ATTACKED,
++                "сигнал всё ещё выше порога, тест проверяет именно это состояние");
++        unit.Update(world);
++        assertTrue(unit.hasActiveOrder(), "повторный тик под огнём не сжигает новый приказ");
++    }
++
++    @Test
++    public void enemyInAttackRangeInterruptsOnlyOnce()
++    {
++        // Иначе юнит, которому сеть велела идти, стоял бы рядом с врагом и «решал»
++        // каждые 0.25 с: приказ сгорал бы быстрее, чем успевал что-то сделать.
++        TestUnit unit = new TestUnit(0, 0);
++        unit.setFraction(new ru.gigabyteartur.weights_of_war.Fraction("Red", null));
++        unit.setSightRange(1000);
++        unit.setAttackRange(200);
++
++        TestUnit enemy = new TestUnit(30, 0);
++        enemy.setFraction(new ru.gigabyteartur.weights_of_war.Fraction("Blue", null));
++
++        GameWorld world = new GameWorld();
++        world.setGameSpeed(1f);
++        world.AddUnit(unit);
++        world.AddUnit(enemy);
++        world.UpdateFogOfWar();
++
++        CommandHoldOrder command = new CommandHoldOrder();
++        unit.BeginOrder(5, command);
++        unit.AddCommand(command);
++        unit.Update(world);
++        assertFalse(unit.hasActiveOrder(), "враг в радиусе удара прерывает движение");
++
++        // Тот же враг не прерывает следующий приказ снова: на него уже отреагировали.
++        CommandHoldOrder second = new CommandHoldOrder();
++        unit.BeginOrder(5, second);
++        unit.AddCommand(second);
++        for (int i = 0; i < 60; i++)
++        {
++            unit.Update(world);
++        }
++        assertTrue(unit.hasActiveOrder(), "одна и та же угроза не сжигает приказ повторно");
++    }
++
++    @Test
++    public void attackOrderEndsWhenItsTargetIsGone()
++    {
++        TestUnit unit = new TestUnit(0, 0);
++        GameWorld world = new GameWorld();
++        world.setGameSpeed(1f);
++
++        // Приказ атаки без цели: цели нет — и приказ не должен изображать погоню.
++        unit.BeginOrder(0, new CommandAttackTarget(null));
++        unit.AddCommand(new CommandAttackTarget(null));
++        unit.Update(world);
++        assertFalse(unit.hasActiveOrder(), "без цели атака не держится");
++    }
++
++    @Test
++    public void escapeMoveIsNotAnOrder()
++    {
++        // Отлипание от затора — служебная команда: приказом не становится,
++        // иначе юнит «обязался» бы отходить десять секунд.
++        TestUnit unit = new TestUnit(0, 0);
++        assertFalse(new CommandMove(10, 10).IsPersistentOrder());
++    }
++
++    @Test
++    public void movingOrdersArePersistent()
++    {
++        assertTrue(new CommandMoveUp().IsPersistentOrder());
++        assertTrue(new ru.gigabyteartur.weights_of_war.commands.CommandMoveToTarget().IsPersistentOrder());
++    }
+ }
