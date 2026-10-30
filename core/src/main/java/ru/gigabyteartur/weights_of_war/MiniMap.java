@@ -11,6 +11,10 @@ import ru.gigabyteartur.weights_of_war.buildings.BattleBuildingCommon;
 // живые объекты мира (юниты — одна точка, строения — четыре точки, цвет по фракции),
 // рисует белым прямоугольником видимую камерой область мира
 // и позволяет кликом центрировать камеру мира на выбранной точке.
+//
+// Ориентация: север мира (+Y) находится сверху мини-карты, как и на экране боя.
+// Оба перевода координат сосредоточены в WorldToMinimap / MinimapToWorld, поэтому
+// точки объектов, рамка видимости и обработка клика не могут разойтись.
 public class MiniMap
 {
     public final static int SIZE = 250;                                     // Размер мини-карты (квадрат), px.
@@ -22,6 +26,7 @@ public class MiniMap
     public final static float VIEW_RECT_LINE_WIDTH = 2f;                    // Толщина линии прямоугольника видимой области, px.
 
     private final Rectangle viewRect = new Rectangle();                     // Переиспользуемый прямоугольник рамки видимой области.
+    private final Vector2 point = new Vector2();                            // Переиспользуемая точка при отрисовке объектов.
 
     // Прямоугольник мини-карты в экранных координатах (верх командной панели).
     public Rectangle GetBounds()
@@ -62,9 +67,13 @@ public class MiniMap
 
             BattleObject battleObject = (BattleObject) object;
 
-            // Мировые координаты центра объекта -> экранные координаты на мини-карте (ось Y инвертирована).
-            float mapX = bounds.x + (object.getX() + object.getWidth() / 2f) / GameWorld.MAP_WIDTH * bounds.width;
-            float mapY = bounds.y + bounds.height - (object.getY() + object.getHeight() / 2f) / GameWorld.MAP_HEIGHT * bounds.height;
+            // Мировые координаты центра объекта -> экранные координаты на мини-карте.
+            WorldToMinimap(bounds,
+                    object.getX() + object.getWidth() / 2f,
+                    object.getY() + object.getHeight() / 2f,
+                    point);
+            float mapX = point.x;
+            float mapY = point.y;
 
             if (battleObject.getFraction() != null)
             {
@@ -120,15 +129,32 @@ public class MiniMap
         shapeRenderer.rect(view.x + view.width - line, view.y, line, view.height);
     }
 
-    // Переводит мировой прямоугольник (видимую область камеры) в координаты мини-карты:
-    // X масштабируется по ширине карты, ось Y инвертирована (верх мира — верх мини-карты).
+    // Переводит мировую точку в координаты мини-карты: X масштабируется по ширине карты,
+    // Y — по высоте без инверсии, поэтому север мира (+Y) попадает в верх мини-карты.
+    public static Vector2 WorldToMinimap(Rectangle bounds, float worldX, float worldY, Vector2 out)
+    {
+        return out.set(
+                bounds.x + worldX / GameWorld.MAP_WIDTH * bounds.width,
+                bounds.y + worldY / GameWorld.MAP_HEIGHT * bounds.height);
+    }
+
+    // Переводит точку мини-карты (экранные координаты, Y снизу вверх) обратно в мир.
+    // Обратна WorldToMinimap: клик по точке возвращает ровно ту часть карты, которую она изображает.
+    public static Vector2 MinimapToWorld(Rectangle bounds, float screenX, float screenY, Vector2 out)
+    {
+        return out.set(
+                (screenX - bounds.x) / bounds.width * GameWorld.MAP_WIDTH,
+                (screenY - bounds.y) / bounds.height * GameWorld.MAP_HEIGHT);
+    }
+
+    // Переводит мировой прямоугольник (видимую область камеры) в координаты мини-карты.
     // Часть прямоугольника за пределами карты обрезается по границам мини-карты.
     public static Rectangle WorldRectToMinimap(Rectangle bounds, Rectangle worldRect, Rectangle out)
     {
         float left = bounds.x + worldRect.x / GameWorld.MAP_WIDTH * bounds.width;
         float right = bounds.x + (worldRect.x + worldRect.width) / GameWorld.MAP_WIDTH * bounds.width;
-        float bottom = bounds.y + bounds.height - worldRect.y / GameWorld.MAP_HEIGHT * bounds.height;
-        float top = bounds.y + bounds.height - (worldRect.y + worldRect.height) / GameWorld.MAP_HEIGHT * bounds.height;
+        float bottom = bounds.y + worldRect.y / GameWorld.MAP_HEIGHT * bounds.height;
+        float top = bounds.y + (worldRect.y + worldRect.height) / GameWorld.MAP_HEIGHT * bounds.height;
 
         float maxX = bounds.x + bounds.width;
         float maxY = bounds.y + bounds.height;
@@ -150,8 +176,6 @@ public class MiniMap
         {
             return null;
         }
-        float worldX = (screenX - bounds.x) / bounds.width * GameWorld.MAP_WIDTH;
-        float worldY = (bounds.y + bounds.height - flippedY) / bounds.height * GameWorld.MAP_HEIGHT;
-        return new Vector2(worldX, worldY);
+        return MinimapToWorld(bounds, screenX, flippedY, new Vector2());
     }
 }
