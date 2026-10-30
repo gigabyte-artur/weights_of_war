@@ -68,16 +68,23 @@ public final class RtsCameraController extends InputAdapter
     {
         viewportOffsetX = Math.min(panelWidth, Math.max(0, screenWidth - 1));
         int worldWidth = Math.max(1, screenWidth - viewportOffsetX);
-        // Виртуальные размеры вьюпорта ставим равными размеру области мира в пикселях:
-        // тогда масштаб FitViewport равен 1 и каждая единица камеры соответствует одному
-        // пикселу экрана. Иначе (как при виртуальных размерах всего окна) из-за letterbox
-        // по горизонтали мировые координаты растягиваются/сжимаются неравномерно —
-        // объекты выглядят «вытянутыми по вертикали», а unproject путает оси.
-        camera.viewportWidth = worldWidth;
-        camera.viewportHeight = screenHeight;
-        viewport.update(worldWidth, screenHeight, false);
+        // Виртуальный размер вьюпорта делаем равным размеру области мира в пикселях:
+        // тогда одна мировая единица — ровно один пиксель по ОБЕИМ осям (масштаб 1:1).
+        //
+        // viewport.update(...) здесь вызывать нельзя: ScalingViewport пересчитывает экранные
+        // границы под Scaling.fit, а следующий за ним apply() перезаписывает
+        // camera.viewportWidth/Height виртуальным размером из конструктора вьюпорта
+        // (полное окно). Из-за этого по X оставался масштаб (ширина мира)/ширина_окна,
+        // а по Y — 1, и квадратные объекты рисовались узкими вертикальными
+        // прямоугольниками. setWorldSize задаёт ровно то поле, из которого apply() берёт
+        // размеры каждый кадр (Main.render вызывает viewport.apply(false)), поэтому
+        // проекция остаётся согласованной и letterbox не появляется.
+        viewport.setWorldSize(worldWidth, screenHeight);
         // Смещаем вьюпорт вправо: пиксели под панелью (x < panelWidth) миром не занимают.
         viewport.setScreenBounds(viewportOffsetX, 0, worldWidth, screenHeight);
+
+        camera.viewportWidth = worldWidth;
+        camera.viewportHeight = screenHeight;
         // Не трогаем GL-состояние здесь: Main.render() сам вызывает viewport.apply(false)
         // перед отрисовкой мира; лишние apply из обработчиков ввода ломали проекцию.
 

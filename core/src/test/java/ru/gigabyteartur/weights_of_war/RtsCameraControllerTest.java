@@ -5,6 +5,7 @@ import com.badlogic.gdx.graphics.OrthographicCamera;
 import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.viewport.FitViewport;
+import com.badlogic.gdx.utils.viewport.Viewport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -200,6 +201,52 @@ public class RtsCameraControllerTest extends HeadlessGdxTest
 
         assertEquals(x0, camera.position.x, 0.01f);
         assertEquals(y0, camera.position.y, 0.01f);
+    }
+
+    // 1 мировая единица должна давать одинаковое число пикселей по X и Y: иначе квадратные
+    // объекты рисуются вытянутыми. Проверяется по реальной математике libGDX:
+    // viewport.apply(false) задаёт camera.viewportWidth/Height из виртуального размера вьюпорта,
+    // а camera.update() строит проекцию из этих полей и экранных границ.
+    private static void assertSquarePixels(OrthographicCamera cam, Viewport vp, String where)
+    {
+        float pxPerUnitX = (float) vp.getScreenWidth() / cam.viewportWidth;
+        float pxPerUnitY = (float) vp.getScreenHeight() / cam.viewportHeight;
+        assertEquals(pxPerUnitX, pxPerUnitY, 1e-4f,
+                where + ": масштаб по осям разный, объекты будут вытянуты (X="
+                        + pxPerUnitX + ", Y=" + pxPerUnitY + ")");
+    }
+
+    @Test
+    public void worldViewportKeepsSquarePixelsAfterResize()
+    {
+        controller.updateViewport(SCREEN_W, SCREEN_H, 300);
+        viewport.apply(false);
+
+        // Вьюпорт занимает только область справа от панели, 1 единица = 1 пиксель.
+        assertEquals(SCREEN_W - 300, viewport.getScreenWidth());
+        assertEquals(SCREEN_H, viewport.getScreenHeight());
+        assertEquals(300, viewport.getScreenX());
+        assertSquarePixels(camera, viewport, "после updateViewport");
+
+        // Повторный apply (его делает Main.render каждый кадр) не должен ломать проекцию.
+        viewport.apply(false);
+        assertSquarePixels(camera, viewport, "после повторного apply");
+    }
+
+    @Test
+    public void visibilityRectMatchesViewportPixelsAfterUpdate()
+    {
+        // Одна мировая единица == одному пикселю, поэтому видимая область в мировых
+        // координатах совпадает по размеру с областью вьюпорта на экране.
+        controller.updateViewport(SCREEN_W, SCREEN_H, 300);
+        viewport.apply(false);
+        controller.centerOn(2000f, 2000f);
+
+        Rectangle visible = new Rectangle();
+        controller.getVisibleWorldRect(visible);
+
+        assertEquals(SCREEN_W - 300, visible.width, 0.01f);
+        assertEquals(SCREEN_H, visible.height, 0.01f);
     }
 
     @Test
