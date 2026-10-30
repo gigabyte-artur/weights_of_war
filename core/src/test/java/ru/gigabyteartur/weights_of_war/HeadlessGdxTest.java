@@ -4,12 +4,14 @@ import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.backends.headless.HeadlessApplication;
 import com.badlogic.gdx.backends.headless.HeadlessApplicationConfiguration;
+import com.badlogic.gdx.Graphics;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.Texture;
 import org.junit.jupiter.api.BeforeAll;
 
 import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 
@@ -47,6 +49,59 @@ public abstract class HeadlessGdxTest
         TextureCache.PutTexture("shieldman.png", new Texture(1, 1, Pixmap.Format.RGBA8888));
         TextureCache.PutTexture("priest.png", new Texture(1, 1, Pixmap.Format.RGBA8888));
         TextureCache.PutTexture("scout.png", new Texture(1, 1, Pixmap.Format.RGBA8888));
+    }
+
+    private static Graphics realGraphics;
+    private static int screenWidth;
+    private static int screenHeight;
+    private static boolean screenSizeOverridden = false;
+
+    // Задаёт «размер окна», который видят Gdx.graphics.getWidth()/getHeight().
+    // Headless-бэкенд всегда отвечает 0x0 (MockGraphics), а camera.unproject берёт оттуда
+    // высоту окна для Y-инверсии и для перевода пикселей в NDC — без этой подмены
+    // проверять соответствие «экран <-> мир» в тестах бессмысленно.
+    // setScreenSize(0, 0) возвращает исходное поведение headless.
+    public static void setScreenSize(int width, int height)
+    {
+        screenWidth = width;
+        screenHeight = height;
+        if (realGraphics == null)
+        {
+            realGraphics = Gdx.graphics;
+        }
+        if (screenSizeOverridden)
+        {
+            return;
+        }
+        final Graphics delegate = realGraphics;
+        Gdx.graphics = (Graphics) Proxy.newProxyInstance(
+            Graphics.class.getClassLoader(),
+            new Class<?>[] { Graphics.class },
+            new InvocationHandler()
+            {
+                @Override
+                public Object invoke(Object proxy, Method method, Object[] args) throws Throwable
+                {
+                    String name = method.getName();
+                    if ("getWidth".equals(name) || "getBackBufferWidth".equals(name))
+                    {
+                        return screenWidth;
+                    }
+                    if ("getHeight".equals(name) || "getBackBufferHeight".equals(name))
+                    {
+                        return screenHeight;
+                    }
+                    try
+                    {
+                        return method.invoke(delegate, args);
+                    }
+                    catch (InvocationTargetException e)
+                    {
+                        throw e.getCause();
+                    }
+                }
+            });
+        screenSizeOverridden = true;
     }
 
     // Возвращает GL20-заглушку, все методы которой возвращают значение по умолчанию.

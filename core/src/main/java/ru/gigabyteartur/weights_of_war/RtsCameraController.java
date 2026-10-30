@@ -174,31 +174,16 @@ public final class RtsCameraController extends InputAdapter
     }
 
     // Преобразует экранные координаты (Gdx.input, Y сверху вниз) в мировые.
-    // Учитывает смещённую область просмотра: мир рисуется только справа от командной панели.
+    // Единственный путь — viewport.unproject: он знает и смещение области мира вправо
+    // от командной панели (screenX/screenWidth), и её размеры, и Y-инверсию.
+    //
+    // Прежний код сам считал NDC (-1..1) и отдавал его в camera.unproject(Vector3),
+    // а тот ожидает ПИКСЕЛИ и сам переводит их в NDC по всему окну. Двойной перевод
+    // сжимал любую точку экрана почти в одну и ту же мировую точку (левый-верхний угол
+    // видимой области) — из-за этого клик по юниту перестал его выделять.
     public Vector2 unprojectScreenPoint(float screenX, float screenY)
     {
-        toViewportNdc(screenX, screenY, tmpVec3);
-        camera.unproject(tmpVec3);
-        return tmpBefore.set(tmpVec3.x, tmpVec3.y);
-    }
-
-    // Переводит экранные координаты мыши (верхний левый угол окна — начало отсчёта, Y вниз)
-    // в NDC-координаты (-1..1) ОБЛАСТИ ПРОСМОТРА МИРА.
-    // Обязательно учитывается реальный прямоугольник вьюпорта (setScreenBounds):
-    // после смещения области просмотра влево на ширину командной панели её левый край
-    // находится не на x = 0, поэтому прямое camera.unproject без этой коррекции давал
-    // неверные мировые координаты клика (юниты не выделялись), а игнорирование
-    // соотношения сторон при вычислении NDC по вертикали приводило к «вытягиванию»
-    // объектов и рассогласованию осей X/Y.
-    private void toViewportNdc(float screenX, float screenY, Vector3 out)
-    {
-        int winW = Gdx.graphics.getWidth();
-        int winH = Gdx.graphics.getHeight();
-        float glX = screenX;                  // GL: Y снизу вверх, X тот же
-        float glY = winH - screenY;
-        float relX = (glX - viewport.getScreenX()) / Math.max(1, viewport.getScreenWidth());
-        float relY = (glY - viewport.getScreenY()) / Math.max(1, viewport.getScreenHeight());
-        out.set(relX * 2f - 1f, relY * 2f - 1f, 0f);
+        return viewport.unproject(tmpBefore.set(screenX, screenY));
     }
 
     // Зум к курсору: world-точка под экранными координатами (screenX, screenY) остаётся
@@ -210,11 +195,12 @@ public final class RtsCameraController extends InputAdapter
             return;
         }
 
-        toViewportNdc(screenX, screenY, tmpVec3);
-        camera.unproject(tmpVec3);
+        // Та же единственная конверсия, что и для клика: иначе «зум к курсору»
+        // уезжает от точки мира, которая реально под мышью.
+        Vector2 cursorWorld = unprojectScreenPoint(screenX, screenY);
         // Вектор от центра камеры до точки под курсором (в мировых единицах).
-        float dx = tmpVec3.x - camera.position.x;
-        float dy = tmpVec3.y - camera.position.y;
+        float dx = cursorWorld.x - camera.position.x;
+        float dy = cursorWorld.y - camera.position.y;
 
         float scale = (float) Math.pow(zoomFactor, -amount);
         float newZoom = MathUtils.clamp(camera.zoom * scale, minZoom, maxZoom);

@@ -6,6 +6,7 @@ import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.viewport.FitViewport;
 import com.badlogic.gdx.utils.viewport.Viewport;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -23,6 +24,8 @@ public class RtsCameraControllerTest extends HeadlessGdxTest
     @BeforeEach
     public void setUp()
     {
+        // Камера берёт высоту окна из Gdx.graphics при переводе пикселей в мир.
+        HeadlessGdxTest.setScreenSize(SCREEN_W, SCREEN_H);
         camera = new OrthographicCamera();
         viewport = new FitViewport(SCREEN_W, SCREEN_H, camera);
         viewport.update(SCREEN_W, SCREEN_H, true);
@@ -279,4 +282,76 @@ public class RtsCameraControllerTest extends HeadlessGdxTest
         assertTrue(visible.x + visible.width <= 2000f + 0.01f, "right edge = " + (visible.x + visible.width));
         assertTrue(visible.y + visible.height <= 2000f + 0.01f, "top edge = " + (visible.y + visible.height));
     }
+
+    // Клик по миру обязан давать именно ту мировую точку, которая нарисована в этом пикселе.
+    // Проверяется против штатной математики libGDX (viewport.project/unproject), а не против
+    // собственной формулы контроллера.
+    @Test
+    public void unprojectScreenPointMapsViewportCornersToVisibleWorld()
+    {
+        controller.updateViewport(SCREEN_W, SCREEN_H, 300);
+        viewport.apply(false);
+        controller.centerOn(2000f, 2000f);
+
+        Rectangle visible = new Rectangle();
+        controller.getVisibleWorldRect(visible);
+
+        // Левый-нижний пиксель области мира (экранные координаты, Y сверху вниз).
+        Vector2 bottomLeft = controller.unprojectScreenPoint(300f, SCREEN_H);
+        assertEquals(visible.x, bottomLeft.x, 0.5f, "левый край мира");
+        assertEquals(visible.y, bottomLeft.y, 0.5f, "нижний край мира");
+
+        // Правый-верхний пиксель области мира.
+        Vector2 topRight = controller.unprojectScreenPoint(SCREEN_W, 0f);
+        assertEquals(visible.x + visible.width, topRight.x, 0.5f, "правый край мира");
+        assertEquals(visible.y + visible.height, topRight.y, 0.5f, "верхний край мира");
+    }
+
+    @Test
+    public void clickOnUnitCenterResolvesInsideUnit()
+    {
+        controller.updateViewport(SCREEN_W, SCREEN_H, 300);
+        viewport.apply(false);
+        controller.centerOn(2000f, 2000f);
+
+        // «Юнит» 25x25: клик по его центру обязан попасть в его прямоугольник —
+        // ровно эту проверку делает Main.selectUnitAt.
+        float unitX = 2010f;
+        float unitY = 2005f;
+        float unitSize = 25f;
+
+        Vector2 screen = new Vector2(unitX + unitSize / 2f, unitY + unitSize / 2f);
+        viewport.project(screen); // мир -> пиксели вьюпорта (начало отсчёта снизу)
+
+        Vector2 world = controller.unprojectScreenPoint(screen.x, SCREEN_H - screen.y);
+
+        assertTrue(world.x >= unitX && world.x <= unitX + unitSize, "world.x = " + world.x);
+        assertTrue(world.y >= unitY && world.y <= unitY + unitSize, "world.y = " + world.y);
+    }
+
+    @Test
+    public void zoomKeepsWorldPointUnderCursorFixedWithControllerConversion()
+    {
+        controller.updateViewport(SCREEN_W, SCREEN_H, 300);
+        viewport.apply(false);
+        controller.centerOn(2000f, 2000f);
+
+        float cursorX = 600f; // внутри области мира (300..800)
+        float cursorY = 200f;
+        Vector2 before = new Vector2(controller.unprojectScreenPoint(cursorX, cursorY));
+
+        controller.zoomAt(cursorX, cursorY, 1f); // приближение
+
+        Vector2 after = controller.unprojectScreenPoint(cursorX, cursorY);
+        assertEquals(before.x, after.x, 1f, "точка под курсором уехала по X");
+        assertEquals(before.y, after.y, 1f, "точка под курсором уехала по Y");
+        assertTrue(camera.zoom < 1f, "приближение не произошло");
+    }
+
+    @AfterAll
+    public static void restoreGraphicsSize()
+    {
+        HeadlessGdxTest.setScreenSize(0, 0);
+    }
+
 }
