@@ -9,6 +9,7 @@ import ru.gigabyteartur.weights_of_war.commands.CommandMove;
 import ru.gigabyteartur.weights_of_war.commands.CommandMoveUp;
 import ru.gigabyteartur.weights_of_war.commands.CommandTargetNearestEnemy;
 import ru.gigabyteartur.weights_of_war.commands.CommandUnit;
+import ru.gigabyteartur.weights_of_war.commands.OrderTracker;
 import ru.gigabyteartur.weights_of_war.testutil.TestUnit;
 
 import java.lang.reflect.Proxy;
@@ -150,8 +151,8 @@ public class DecisionCooldownTest
         unit.BeginOrder(3, new CommandMoveUp());
         assertTrue(unit.hasActiveOrder(), "движение — приказ, а не разовое действие");
         assertEquals(3, unit.getOrderIndex());
-        assertTrue(unit.getOrderRemaining() >= BattleUnitCommon.ORDER_MIN_SEC - 1e-4f);
-        assertTrue(unit.getOrderRemaining() <= BattleUnitCommon.ORDER_MAX_SEC + 1e-4f);
+        assertTrue(unit.getOrderRemaining() >= OrderTracker.ORDER_MIN_SEC - 1e-4f);
+        assertTrue(unit.getOrderRemaining() <= OrderTracker.ORDER_MAX_SEC + 1e-4f);
     }
 
     @Test
@@ -199,7 +200,7 @@ public class DecisionCooldownTest
         unit.BeginOrder(5, command);
         unit.AddCommand(command);
 
-        int ticks = (int) Math.ceil(BattleUnitCommon.ORDER_MAX_SEC * 6f) + 2;
+        int ticks = (int) Math.ceil(OrderTracker.ORDER_MAX_SEC * 6f) + 2;
         for (int i = 0; i < ticks; i++)
         {
             unit.Update(world);
@@ -246,7 +247,7 @@ public class DecisionCooldownTest
         CommandHoldOrder second = new CommandHoldOrder();
         unit.BeginOrder(5, second);
         unit.AddCommand(second);
-        assertTrue(unit.getAttacked() > BattleUnitCommon.ORDER_INTERRUPT_ATTACKED,
+        assertTrue(unit.getAttacked() > OrderTracker.ORDER_INTERRUPT_ATTACKED,
                 "сигнал всё ещё выше порога, тест проверяет именно это состояние");
         unit.Update(world);
         assertTrue(unit.hasActiveOrder(), "повторный тик под огнём не сжигает новый приказ");

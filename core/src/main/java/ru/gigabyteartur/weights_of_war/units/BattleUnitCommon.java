@@ -14,6 +14,7 @@ import ru.gigabyteartur.weights_of_war.commands.CommandAttackTarget;
 import ru.gigabyteartur.weights_of_war.commands.CommandMove;
 import ru.gigabyteartur.weights_of_war.commands.CommandThink;
 import ru.gigabyteartur.weights_of_war.commands.CommandUnit;
+import ru.gigabyteartur.weights_of_war.commands.OrderTracker;
 import ru.gigabyteartur.weights_of_war.GameWorld;
 import ru.gigabyteartur.weights_of_war.neuro_net.DenseLayer;
 import ru.gigabyteartur.weights_of_war.neuro_net.NeuroNet;
@@ -35,15 +36,6 @@ public abstract class BattleUnitCommon extends BattleObject
     // Число нейронов слоя памяти: он видит сенсоры текущего кадра и выход
     // прошлого решения, то есть даёт сети состояние между вызовами.
     public final static int MEMORY_COUNT = 8;
-
-    // Приказ — намерение с запасом времени. Раньше «команда» жила 0.25 игровых секунд,
-    // поэтому сеть не могла связать своё решение с последствиями: выбор цели и удар
-    // стоили одинаково, а событие на поле боя не успевало стать причиной смены курса.
-    // Теперь выбранное действие живёт ORDER_MIN_SEC..ORDER_MAX_SEC игровых секунд, а
-    // меняется только по событию: бьют, цель пропала, враг вошёл в радиус атаки.
-    public final static float ORDER_MIN_SEC = 5f;                // Минимальный срок приказа, игровых секунд.
-    public final static float ORDER_MAX_SEC = 10f;               // Максимальный срок приказа, игровых секунд.
-    public final static float ORDER_INTERRUPT_ATTACKED = 50f;    // Порог «меня бьют», при котором приказ прерывается.
 
     // Срок жизни юнита: застой — это долг, а не приговор.
     //   * каждая волна без прогресса добавляет к долгу одну волну;
@@ -81,11 +73,9 @@ public abstract class BattleUnitCommon extends BattleObject
     private float stuck = 0f;                   // Накопленное время застревания, сек.
     private float attacked = 0f;                // Сигнал «под атакой» (0..100, затухает со временем).
     private float decisionCooldown = 0f;        // Сколько игровых секунд ещё нельзя принимать новое решение.
-    private int orderIndex = -1;                // Выходной нейрон, которым выбран действующий приказ (-1 = приказа нет).
-    private float orderRemaining = 0f;          // Сколько игровых секунд приказ ещё жив.
-    private float threatScanCooldown = 0f;      // Через сколько игровых секунд снова проверить врага рядом.
-    private boolean attackedInterruptSpent = false;  // Прерывание по удару уже израсходовано до затухания сигнала.
-    private BattleObject closeEnemy = null;     // Враг, из-за которого приказ уже прерывали (чтобы не прерывать каждый тик).
+    // Механизм приказов: срок жизни решения, его прерывания и переиздание команды.
+    // Очередь команд остаётся здесь — приказ лишь решает, чем её наполнять.
+    private final OrderTracker order = new OrderTracker();
     private ArrayList<CommandUnit> commandsQueue = new ArrayList<CommandUnit>();        // очередь команд.
 
     protected float separationRadius = 30f;      // Радиус отталкивания от союзников (boids).
@@ -233,38 +223,22 @@ public abstract class BattleUnitCommon extends BattleObject
             decisionCooldown -= delta;
         }
 
-        // Срок приказа тикает в игровых секундах — так же, как кулдаун решения.
-        if (orderRemaining > 0f)
-        {
-            orderRemaining -= delta;
-        }
-        if (threatScanCooldown > 0f)
-        {
-            threatScanCooldown -= delta;
-        }
-
         // Событие важнее расписания: если приказ перестал соответствовать полю боя,
         // остаток срока сгорает и юнит думает заново.
-        if (orderIndex >= 0 && OrderInterrupted(world))
+        if (order.Advance(delta, this, world))
         {
             ClearCommands();
-            EndOrder();
         }
 
         if (commandsQueue.isEmpty())
         {
-            if (orderIndex >= 0 && orderRemaining > 0f)
+            if (order.IsActive())
             {
                 // Приказ жив, а конкретная команда исчерпалась: переиздаём ту же команду
                 // (следующие 30 px, следующий шаг к цели), не спрашивая сеть заново.
-                CommandUnit repeated = CommandThink.CreateCommand(orderIndex, this, world);
-                if (repeated == null || !repeated.IsPersistentOrder())
+                CommandUnit repeated = order.Reissue(this, world);
+                if (repeated != null)
                 {
-                    EndOrder();
-                }
-                else
-                {
-                    repeated.OnOrderRepeat(this, world);
                     commandsQueue.add(repeated);
                 }
             }
@@ -290,7 +264,7 @@ public abstract class BattleUnitCommon extends BattleObject
         if (stuck > STUCK_THRESHOLD)
         {
             ClearCommands();
-            EndOrder();
+            order.End();
             AddCommand(EscapeCommand(world));
             stuck = 0f;
         }
@@ -301,32 +275,22 @@ public abstract class BattleUnitCommon extends BattleObject
 
     // Начинает приказ: запоминает, каким выходом сети он выбран, и назначает срок.
     // Разовые команды (выбор цели) приказом не становятся — иначе юнит «обязался»
-    // выбирать цель на десять секунд и просто стоял.
+    // выбирать цель на десять секунд и просто стоял. Сам механизм — в OrderTracker.
     public void BeginOrder(int index, CommandUnit command)
     {
-        if (command != null && command.IsPersistentOrder())
-        {
-            orderIndex = index;
-            orderRemaining = ORDER_MIN_SEC + (float) Math.random() * (ORDER_MAX_SEC - ORDER_MIN_SEC);
-        }
-        else
-        {
-            EndOrder();
-        }
+        order.Begin(index, command);
     }
 
     // Снимает приказ: следующий тик с пустой очередью снова спросит сеть.
     public void EndOrder()
     {
-        orderIndex = -1;
-        orderRemaining = 0f;
-        threatScanCooldown = 0f;
+        order.End();
     }
 
     // Жив ли сейчас приказ.
     public boolean hasActiveOrder()
     {
-        return orderIndex >= 0 && orderRemaining > 0f;
+        return order.IsActive();
     }
 
     // Сколько игровых секунд ещё нельзя принимать новое решение (для тестов).
@@ -338,67 +302,13 @@ public abstract class BattleUnitCommon extends BattleObject
     // Индекс выходного нейрона действующего приказа (-1, если приказа нет).
     public int getOrderIndex()
     {
-        return orderIndex;
+        return order.GetIndex();
     }
 
     // Сколько игровых секунд приказу осталось жить.
     public float getOrderRemaining()
     {
-        return orderRemaining;
-    }
-
-    // Прерывания приказа: события, ради которых стоит сжечь остаток срока.
-    // Проверки дешёвые (кроме поиска врага в радиусе атаки — он идёт не чаще
-    // кулдауна решения, то есть с той же частотой, с какой раньше жили сенсоры).
-    private boolean OrderInterrupted(GameWorld world)
-    {
-        if (orderRemaining <= 0f)
-        {
-            return true;
-        }
-        // Юнита бьют — обстоятельство важнее выбранного курса. Прерываем ОДИН раз
-        // на удар: сигнал «под атакой» затухает несколько секунд, и без этого флага
-        // приказ сгорал бы каждый тик, пока юнит под огнём, — то есть новый приказ
-        // жил бы не дольше старого кадра.
-        if (attacked >= ORDER_INTERRUPT_ATTACKED && !attackedInterruptSpent)
-        {
-            attackedInterruptSpent = true;
-            return true;
-        }
-        if (attacked < ORDER_INTERRUPT_ATTACKED)
-        {
-            attackedInterruptSpent = false;
-        }
-        if (orderIndex == CommandThink.NEURON_ATTACK_TARGET)
-        {
-            // Цель приказа умерла или ушла в туман — атаковать больше некого.
-            return getVisibleTargetObject(world) == null;
-        }
-        // Приказ не про атаку, а враг уже в радиусе удара. Обход мира стоит дорого,
-        // поэтому проверка идёт не чаще DECISION_INTERVAL_SEC — реакция на событие,
-        // а не сенсор каждый кадр.
-        if (threatScanCooldown > 0f)
-        {
-            return false;
-        }
-        threatScanCooldown = DECISION_INTERVAL_SEC;
-
-        BattleObject enemy = world.FindNearestEnemyWithin(this, attackRange);
-        if (enemy == null)
-        {
-            // Угроза ушла: следующий подошедший враг снова заслуживает реакции.
-            closeEnemy = null;
-            return false;
-        }
-        if (enemy == closeEnemy)
-        {
-            // На этого врага уже отреагировали. Без этой памяти юнит, которому сеть
-            // велела идти, стоял бы рядом с врагом и «решал» каждые 0.25 с — приказ
-            // сгорал бы быстрее, чем успевал что-то сделать.
-            return false;
-        }
-        closeEnemy = enemy;
-        return true;
+        return order.GetRemaining();
     }
 
     // Возвращает команду «отлипания» от затора: уход по вектору отталкивания от союзников (или случайно, если соседей нет).
@@ -844,11 +754,7 @@ public abstract class BattleUnitCommon extends BattleObject
         targetObject = null;
         attacked = 0f;
         decisionCooldown = 0f;
-        orderIndex = -1;
-        orderRemaining = 0f;
-        threatScanCooldown = 0f;
-        attackedInterruptSpent = false;
-        closeEnemy = null;
+        order.Reset();
     }
 
     // Продвигает долг застоя на одну волну. О смерти решает долг, а не факт
