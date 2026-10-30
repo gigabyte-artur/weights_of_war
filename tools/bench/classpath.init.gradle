@@ -1,0 +1,23 @@
+// Резолвит classpath модуля core, не трогая build.gradle проекта.
+//
+// Из tools/bench/wz_bench.py вызывается так:
+//   <java> -cp gradle/wrapper/gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain \
+//          -I tools/bench/classpath.init.gradle :core:printBenchClasspath -q
+// Результат печатается строкой BENCH_CLASSPATH_FILE=<путь>; сам список — в build/bench-classpath.txt
+// (разделитель ';').
+//
+// plugins.withId, а не hasPlugin: init-скрипт исполняется ДО build.gradle, и на тот момент
+// java-плагина в проекте ещё нет — hasPlugin молча пропустил бы все проекты.
+allprojects { p ->
+    p.plugins.withId("java") {
+        p.tasks.register("printBenchClasspath") {
+            doLast {
+                def files = p.sourceSets.main.runtimeClasspath.files.collect { it.absolutePath }
+                def out = new File(p.rootProject.projectDir, "build/bench-classpath.txt")
+                out.parentFile.mkdirs()
+                out.text = files.join(";")
+                println "BENCH_CLASSPATH_FILE=" + out.absolutePath
+            }
+        }
+    }
+}
