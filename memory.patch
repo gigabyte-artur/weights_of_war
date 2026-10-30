@@ -1,0 +1,642 @@
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/neuro_net/NeuroNet.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/neuro_net/NeuroNet.java
+index 74b3864..77b284a 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/neuro_net/NeuroNet.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/neuro_net/NeuroNet.java
+@@ -3,6 +3,7 @@ package ru.gigabyteartur.weights_of_war.neuro_net;
+ import java.io.File;
+ import java.util.ArrayList;
+ import java.util.HashMap;
++import java.util.IdentityHashMap;
+ import java.util.Random;
+ import javax.xml.parsers.DocumentBuilder;
+ import javax.xml.parsers.DocumentBuilderFactory;
+@@ -18,7 +19,7 @@ import org.w3c.dom.NodeList;
+ // Нейронная сеть.
+ public class NeuroNet
+ {
+-    public final static int NEURO_NET_FORMAT_VERSION = 7;       // Версия формата сохранения нейронной сети. Поднимать при каждом изменении XML-формата.
++    public final static int NEURO_NET_FORMAT_VERSION = 8;       // Версия формата сохранения нейронной сети. Поднимать при каждом изменении XML-формата.
+ 
+     private static NeuroNet logTarget = null;                   // Сеть, состояние которой нужно залогировать при следующем CalcSignals.
+     private static String logFileName = null;                   // Имя файла для лога состояния сети.
+@@ -28,6 +29,11 @@ public class NeuroNet
+ 
+     private ArrayList<Layer> Layers = new ArrayList<>();
+ 
++    // Есть ли в модели рекуррентная связь (источник не раньше цели). Считается
++    // один раз в Compile(): без рекуррентных связей CalcSignals не снимает
++    // снимок сигналов, поэтому обычные сети не платят за чужую механику.
++    private boolean recurrent_connections = false;
++
+     // Добавляет в модель слой layer_in.
+     public void AddLayer(Layer layer_in)
+     {
+@@ -92,6 +98,38 @@ public class NeuroNet
+                 }
+             }
+         }
++
++        this.recurrent_connections = DetectRecurrentConnections();
++    }
++
++    // Возвращает true, если хотя бы одна связь идёт от нейрона не в более раннем
++    // слое, чем её цель. Такие связи в CalcSignals читают прошлое значение.
++    private boolean DetectRecurrentConnections()
++    {
++        IdentityHashMap<Neuron, Integer> neuron_layer_index = new IdentityHashMap<>();
++        for (int i = 0; i < this.Layers.size(); i++)
++        {
++            for (Neuron neuron : this.Layers.get(i).GetNeurons())
++            {
++                neuron_layer_index.put(neuron, i);
++            }
++        }
++
++        for (int i = 0; i < this.Layers.size(); i++)
++        {
++            for (Neuron neuron : this.Layers.get(i).GetNeurons())
++            {
++                for (Axon axon : neuron.GetAxons())
++                {
++                    Integer source_layer_index = neuron_layer_index.get(axon.GetSource());
++                    if (source_layer_index == null || source_layer_index >= i)
++                    {
++                        return true;
++                    }
++                }
++            }
++        }
++        return false;
+     }
+ 
+ //    // Обнуляет сигналы во всех слоях текущей сети.
+@@ -137,6 +175,8 @@ public class NeuroNet
+             }
+         }
+ 
++        this.recurrent_connections = neuro_net_in.recurrent_connections;
++
+         // Копируем связи (аксоны).
+         for (Layer layer : neuro_net_in.GetLayers())
+         {
+@@ -179,10 +219,32 @@ public class NeuroNet
+     }
+ 
+     // Вычисляет сигналы в текущей нейронной сети по слоям.
++    //
++    // Прямые связи читают сигнал источника сразу после его пересчёта (как в
++    // обычном feedforward). Рекуррентная связь — та, у которой источник лежит в
++    // текущем или более позднем слое, — обязана читать значение ПРОШЛОГО вызова:
++    // иначе результат зависел бы от порядка нейронов внутри слоя, а не от модели.
++    // Поэтому до прохода снимается снимок сигналов всей сети.
+     public void CalcSignals()
+     {
+         ArrayList<Layer> layers = this.GetLayers();
+ 
++        IdentityHashMap<Neuron, Double> previous_signals = null;
++        IdentityHashMap<Neuron, Integer> neuron_layer_index = null;
++        if (this.recurrent_connections)
++        {
++            previous_signals = new IdentityHashMap<>();
++            neuron_layer_index = new IdentityHashMap<>();
++            for (int i = 0; i < layers.size(); i++)
++            {
++                for (Neuron neuron : layers.get(i).GetNeurons())
++                {
++                    previous_signals.put(neuron, neuron.GetSignal());
++                    neuron_layer_index.put(neuron, i);
++                }
++            }
++        }
++
+         for (int layerIdx = 1; layerIdx < layers.size(); layerIdx++)
+         {
+             Layer currentLayer = layers.get(layerIdx);
+@@ -199,7 +261,7 @@ public class NeuroNet
+                 {
+                     Neuron source = axon.GetSource();
+                     double weight = axon.GetWeight();
+-                    sum += source.GetSignal() * weight;
++                    sum += ReadSourceSignal(source, layerIdx, previous_signals, neuron_layer_index) * weight;
+                 }
+ 
+                 // Применяем функцию активации tanh
+@@ -220,6 +282,65 @@ public class NeuroNet
+         }
+     }
+ 
++    // Возвращает сигнал источника с учётом направления связи: для рекуррентной
++    // связи (источник в текущем или более позднем слое) берётся значение прошлого
++    // вызова, для прямой — уже пересчитанное в этом проходе.
++    private double ReadSourceSignal(Neuron source_in, int target_layer_index_in,
++                                    IdentityHashMap<Neuron, Double> previous_signals_in,
++                                    IdentityHashMap<Neuron, Integer> neuron_layer_index_in)
++    {
++        if (previous_signals_in == null || neuron_layer_index_in == null)
++        {
++            return source_in.GetSignal();
++        }
++        Integer source_layer_index = neuron_layer_index_in.get(source_in);
++        if (source_layer_index == null)
++        {
++            // Источник вне этой сети — читаем как есть.
++            return source_in.GetSignal();
++        }
++        if (source_layer_index >= target_layer_index_in)
++        {
++            Double previous = previous_signals_in.get(source_in);
++            if (previous != null)
++            {
++                return previous;
++            }
++        }
++        return source_in.GetSignal();
++    }
++
++    // Вставляет перед УЖЕ ДОБАВЛЕННЫМ выходным слоем слой памяти и связывает
++    // его двумя путями:
++    // прямой связью от предыдущего слоя (её добавляет Compile) и рекуррентной
++    // связью от выходного слоя, благодаря которой слой памяти на следующем
++    // вызове видит решение, принятое на прошлом. Вызывать до Compile() и
++    // RandomWeights().
++    public void AddMemoryLayer(int size_in)
++    {
++        if (this.Layers.size() < 2 || size_in <= 0)
++        {
++            return;
++        }
++
++        Layer memory_layer = new DenseLayer();
++        memory_layer.GenerateLayer(size_in, false, false);
++        memory_layer.SetParentNeuroNet(this);
++
++        int output_layer_index = this.Layers.size() - 1;
++        this.Layers.add(output_layer_index, memory_layer);
++        Layer output_layer = this.Layers.get(output_layer_index + 1);
++
++        // Рекуррентная связь: выход прошлого вызова → слой памяти.
++        for (Neuron memory_neuron : memory_layer.GetNeurons())
++        {
++            for (Neuron output_neuron : output_layer.GetNeurons())
++            {
++                memory_neuron.GenerateAddAxon(output_neuron, 0);
++            }
++        }
++    }
++
+     // Планирует логирование состояния сети target при её следующем расчёте сигналов.
+     public static void ScheduleLogging(NeuroNet target, String fileName, String unitName, ArrayList<String> inputNames, ArrayList<String> outputNames)
+     {
+@@ -480,6 +601,13 @@ public class NeuroNet
+ 
+             Layer last_layer = null;
+ 
++            // Аксоны разрешаются после чтения всех слоёв: рекуррентная связь
++            // (например, выход -> слой памяти) смотрит в слой, который идёт
++            // ПОЗЖЕ цели, поэтому поиск источника только в предыдущем слое
++            // терял бы её при загрузке.
++            ArrayList<Axon> pending_axons = new ArrayList<>();
++            ArrayList<String> pending_axon_source_ids = new ArrayList<>();
++
+             for (int i = 0; i < root_children.getLength(); i++)
+             {
+                 Node root_child = root_children.item(i);
+@@ -594,12 +722,13 @@ public class NeuroNet
+                                                     }
+                                                 }
+ 
+-                                                if (!source_neuron_id.equals("") && last_layer != null)
++                                                new_axon.SetWeight(new_weight);
++                                                new_neuron.AddAxon(new_axon);
++                                                if (!source_neuron_id.equals(""))
+                                                 {
+-                                                    Neuron source_neuron = last_layer.FindNeuronById(source_neuron_id);
+-                                                    new_axon.Set(source_neuron, new_weight);
++                                                    pending_axons.add(new_axon);
++                                                    pending_axon_source_ids.add(source_neuron_id);
+                                                 }
+-                                                new_neuron.AddAxon(new_axon);
+                                             }
+                                         }
+                                     }
+@@ -617,6 +746,26 @@ public class NeuroNet
+                 }
+             }
+ 
++            // Связываем аксоны по идентификаторам нейронов всей сети.
++            HashMap<String, Neuron> neuron_by_id = new HashMap<>();
++            for (Layer curr_layer : this.Layers)
++            {
++                for (Neuron curr_neuron : curr_layer.GetNeurons())
++                {
++                    neuron_by_id.put(curr_neuron.GetId(), curr_neuron);
++                }
++            }
++            for (int i = 0; i < pending_axons.size(); i++)
++            {
++                Neuron source_neuron = neuron_by_id.get(pending_axon_source_ids.get(i));
++                if (source_neuron != null)
++                {
++                    pending_axons.get(i).Set(source_neuron, pending_axons.get(i).GetWeight());
++                }
++            }
++
++            this.recurrent_connections = DetectRecurrentConnections();
++
+             return true;
+         }
+         catch (Exception e)
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommon.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommon.java
+index 348191c..efe60e2 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommon.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommon.java
+@@ -32,6 +32,10 @@ public abstract class BattleUnitCommon extends BattleObject
+     public final static float DECISION_INTERVAL_SEC = 0.25f;   // Минимальный интервал между решениями юнита, игровых секунд.
+     public final static int SENSOR_COUNT = 29;                 // Число входов сети: размер базового набора сенсоров.
+ 
++    // Число нейронов слоя памяти: он видит сенсоры текущего кадра и выход
++    // прошлого решения, то есть даёт сети состояние между вызовами.
++    public final static int MEMORY_COUNT = 8;
++
+     // Срок жизни юнита: застой — это долг, а не приговор.
+     //   * каждая волна без прогресса добавляет к долгу одну волну;
+     //   * заработанный фит гасит долг: STAGNATION_FIT_PER_WAVE фита = одна волна;
+@@ -728,7 +732,8 @@ public abstract class BattleUnitCommon extends BattleObject
+     }
+ 
+     // Формирует нейронную сеть юнита: входной слой 29 нейронов,
+-    // 2 скрытых полносвязных слоя по 20 нейронов, выходной слой 10 нейронов.
++    // 2 скрытых полносвязных слоя по 20 нейронов, слой памяти 8 нейронов
++    // и выходной слой 10 нейронов.
+     public static NeuroNet CreateNeuroNetUnit()
+     {
+         NeuroNet neuroNet = new NeuroNet();
+@@ -746,6 +751,11 @@ public abstract class BattleUnitCommon extends BattleObject
+ 
+         // Выходной слой.
+         neuroNet.GenerateAddLayer(10, false, true);
++
++        // Слой памяти встаёт ПЕРЕД выходом: прямое питание от скрытых слоёв
++        // плюс рекуррентная связь от выхода (решение прошлого вызова).
++        neuroNet.AddMemoryLayer(MEMORY_COUNT);
++
+         neuroNet.Compile();
+         neuroNet.RandomWeights();
+ 
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/units/UnitPriest.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/units/UnitPriest.java
+index 0a7f938..3b77f56 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/units/UnitPriest.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/units/UnitPriest.java
+@@ -189,6 +189,7 @@ public class UnitPriest extends BattleUnitCommon
+ 
+         // Выходной слой.
+         neuroNet.GenerateAddLayer(11, false, true);
++        neuroNet.AddMemoryLayer(BattleUnitCommon.MEMORY_COUNT);
+         neuroNet.Compile();
+         neuroNet.RandomWeights();
+ 
+diff --git a/core/src/test/java/ru/gigabyteartur/weights_of_war/buildings/BuildingCoreTest.java b/core/src/test/java/ru/gigabyteartur/weights_of_war/buildings/BuildingCoreTest.java
+index 6b52c1b..a6411e9 100644
+--- a/core/src/test/java/ru/gigabyteartur/weights_of_war/buildings/BuildingCoreTest.java
++++ b/core/src/test/java/ru/gigabyteartur/weights_of_war/buildings/BuildingCoreTest.java
+@@ -142,7 +142,7 @@ public class BuildingCoreTest extends HeadlessGdxTest
+         for (NeuroNet child : offspring)
+         {
+             assertNotNull(child);
+-            assertEquals(4, child.GetLayers().size()); // 26 → 2×20 → 10
++            assertEquals(5, child.GetLayers().size()); // 26 → 2×20 → 10
+             assertNotSame(coreNet, child);
+             assertNotSame(topUnit.getNeuroNet(), child);
+         }
+@@ -441,7 +441,7 @@ public class BuildingCoreTest extends HeadlessGdxTest
+         // поэтому он не обязан совпадать с чемпионом.
+         NeuroNet immigrant = kids.get(kids.size() - 1);
+         assertNotNull(immigrant);
+-        assertEquals(4, immigrant.GetLayers().size());
++        assertEquals(5, immigrant.GetLayers().size());
+     }
+ 
+     @Test
+diff --git a/core/src/test/java/ru/gigabyteartur/weights_of_war/neuro_net/NeuroNetTest.java b/core/src/test/java/ru/gigabyteartur/weights_of_war/neuro_net/NeuroNetTest.java
+index 7c2ce08..14fa242 100644
+--- a/core/src/test/java/ru/gigabyteartur/weights_of_war/neuro_net/NeuroNetTest.java
++++ b/core/src/test/java/ru/gigabyteartur/weights_of_war/neuro_net/NeuroNetTest.java
+@@ -362,11 +362,11 @@ public class NeuroNetTest
+             net.Mutate(1.0, 2.0);   // намеренно большой шаг
+         }
+ 
+-        assertEquals(4, net.GetLayers().size());
++        assertEquals(5, net.GetLayers().size());
+         // Размер входа — контракт с базовым набором сенсоров (SensorCount), а не литерал:
+         // добавление сенсора меняет структуру сети, и это должно быть видно здесь.
+         assertEquals(BattleUnitCommon.SENSOR_COUNT, net.GetLayers().get(0).GetSize());
+-        assertEquals(10, net.GetLayers().get(3).GetSize());
++        assertEquals(10, net.GetLayers().get(4).GetSize());
+ 
+         for (Layer l : net.GetLayers())
+         {
+@@ -395,4 +395,74 @@ public class NeuroNetTest
+         assertEquals(before, parent.GetLayers().get(1).GetNeurons().get(0).GetAxons().get(0).GetWeight(), 1e-12);
+     }
+ 
++
++    // Рекуррентная связь внутри ОДНОГО слоя обязана читать значение прошлого
++    // вызова, а не уже пересчитанное в этом проходе: иначе результат зависел бы
++    // от порядка нейронов внутри слоя. Проверяется на весах, выставленных вручную,
++    // поэтому тест не зависит от случайной инициализации.
++    @Test
++    public void sameLayerRecurrenceReadsPreviousCallValue()
++    {
++        NeuroNet net = new NeuroNet();
++        net.GenerateAddLayer(1, true, false);    // вход
++        net.GenerateAddLayer(2, false, false);   // слой A: A0, A1
++        net.GenerateAddLayer(1, false, true);    // выход
++
++        // Рекуррентная связь A0 -> A1 (источник в том же слое, что и цель)
++        // добавляется ДО компиляции: Compile один раз строит прямые связи и
++        // заодно фиксирует наличие рекуррентных.
++        Layer a = net.GetLayers().get(1);
++        Neuron a0 = a.GetNeurons().get(0);
++        Neuron a1 = a.GetNeurons().get(1);
++        a1.GenerateAddAxon(a0, 0);
++
++        net.Compile();
++
++        // Обнуляем всё и оставляем только два нужных пути:
++        // A0 = tanh(вход * 1), A1 = tanh(A0_прошлого * 1).
++        for (Layer layer : net.GetLayers())
++        {
++            for (Neuron neuron : layer.GetNeurons())
++            {
++                neuron.SetBias(0);
++                for (Axon axon : neuron.GetAxons())
++                {
++                    axon.SetWeight(0);
++                }
++            }
++        }
++        for (Axon axon : a0.GetAxons())
++        {
++            if (axon.GetSource() == net.GetLayers().get(0).GetNeurons().get(0))
++            {
++                axon.SetWeight(1.0);
++            }
++        }
++        boolean hasRecurrentAxon = false;
++        for (Axon axon : a1.GetAxons())
++        {
++            if (axon.GetSource() == a0)
++            {
++                axon.SetWeight(1.0);
++                hasRecurrentAxon = true;
++            }
++        }
++        assertTrue(hasRecurrentAxon, "рекуррентный аксон A0 -> A1 должен существовать");
++
++        net.SetInputSignal(0, 1.0);
++        net.CalcSignals();
++        double a0First = a0.GetSignal();
++        assertEquals(Math.tanh(1.0), a0First, 1e-9);
++
++        // Вход меняется на противоположный. A1 обязан увидеть ПРОШЛОЕ значение A0.
++        net.SetInputSignal(0, -1.0);
++        net.CalcSignals();
++        double a0Second = a0.GetSignal();
++        assertEquals(Math.tanh(-1.0), a0Second, 1e-9);
++
++        assertEquals(Math.tanh(a0First), a1.GetSignal(), 1e-9,
++                "A1 должен читать A0 прошлого вызова");
++        assertNotEquals(Math.tanh(a0Second), a1.GetSignal(),
++                "A1 не должен читать только что пересчитанный A0");
++    }
+ }
+diff --git a/core/src/test/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommonTest.java b/core/src/test/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommonTest.java
+index 34fb6fe..d23304c 100644
+--- a/core/src/test/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommonTest.java
++++ b/core/src/test/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommonTest.java
+@@ -2,10 +2,13 @@ package ru.gigabyteartur.weights_of_war.units;
+ 
+ import org.junit.jupiter.api.Test;
+ import ru.gigabyteartur.weights_of_war.commands.CommandThink;
++import ru.gigabyteartur.weights_of_war.neuro_net.Axon;
+ import ru.gigabyteartur.weights_of_war.neuro_net.Layer;
+ import ru.gigabyteartur.weights_of_war.neuro_net.NeuroNet;
++import ru.gigabyteartur.weights_of_war.neuro_net.Neuron;
+ import ru.gigabyteartur.weights_of_war.testutil.TestUnit;
+ 
++import java.io.File;
+ import java.util.ArrayList;
+ 
+ import static org.junit.jupiter.api.Assertions.*;
+@@ -18,7 +21,7 @@ public class BattleUnitCommonTest
+         NeuroNet net = BattleUnitCommon.CreateNeuroNetUnit();
+         ArrayList<Layer> layers = net.GetLayers();
+ 
+-        assertEquals(4, layers.size());
++        assertEquals(5, layers.size());
+         // Вход сети обязан совпадать с числом базовых сенсоров: иначе часть сенсоров
+         // молча не доходит до сети (CommandThink читает min(sensors, входной слой)).
+         assertEquals(BattleUnitCommon.SENSOR_COUNT, layers.get(0).GetSize());
+@@ -33,9 +36,13 @@ public class BattleUnitCommonTest
+             assertFalse(layers.get(i).GetIsOutput());
+         }
+ 
+-        assertEquals(10, layers.get(3).GetSize());
++        assertEquals(BattleUnitCommon.MEMORY_COUNT, layers.get(3).GetSize());
+         assertFalse(layers.get(3).GetIsInput());
+-        assertTrue(layers.get(3).GetIsOutput());
++        assertFalse(layers.get(3).GetIsOutput());
++
++        assertEquals(10, layers.get(4).GetSize());
++        assertFalse(layers.get(4).GetIsInput());
++        assertTrue(layers.get(4).GetIsOutput());
+     }
+ 
+     // Общая настройка для тестов застоя: 50 фита оплачивают волну, база 4, потолок +8.
+@@ -143,7 +150,7 @@ public class BattleUnitCommonTest
+         NeuroNet net = UnitPriest.CreateNeuroNetPriest();
+         ArrayList<Layer> layers = net.GetLayers();
+ 
+-        assertEquals(4, layers.size());
++        assertEquals(5, layers.size());
+         // Вход жреца обязан покрывать его набор сенсоров: базовые плюс свои (5).
+         assertEquals(BattleUnitCommon.SENSOR_COUNT + UnitPriest.OWN_SENSOR_COUNT, layers.get(0).GetSize());
+         assertTrue(layers.get(0).GetIsInput());
+@@ -154,9 +161,12 @@ public class BattleUnitCommonTest
+             assertEquals(20, layers.get(i).GetSize());
+         }
+ 
+-        assertEquals(11, layers.get(3).GetSize());
+-        assertFalse(layers.get(3).GetIsInput());
+-        assertTrue(layers.get(3).GetIsOutput());
++        assertEquals(BattleUnitCommon.MEMORY_COUNT, layers.get(3).GetSize());
++        assertFalse(layers.get(3).GetIsOutput());
++
++        assertEquals(11, layers.get(4).GetSize());
++        assertFalse(layers.get(4).GetIsInput());
++        assertTrue(layers.get(4).GetIsOutput());
+     }
+ 
+     @Test
+@@ -168,4 +178,161 @@ public class BattleUnitCommonTest
+         // MANA_MAX / (2 * PRODUCTION_INTERVAL) = 200 / 120 ≈ 1.6667 (PRODUCTION_INTERVAL = 60).
+         assertEquals(200f / 120f, UnitPriest.MANA_REGEN_PER_SECOND, 1e-4);
+     }
++
++    // ===== Память сети (рекуррентный слой) =====
++
++    // Слой памяти стоит перед выходным и получает связь ОТ выходного слоя:
++    // только так он видит решение, принятое на прошлом вызове.
++    @Test
++    public void memoryLayerReceivesRecurrentConnectionFromOutput()
++    {
++        NeuroNet net = BattleUnitCommon.CreateNeuroNetUnit();
++        ArrayList<Layer> layers = net.GetLayers();
++
++        Layer memoryLayer = layers.get(3);
++        Layer outputLayer = layers.get(4);
++        assertEquals(BattleUnitCommon.MEMORY_COUNT, memoryLayer.GetSize());
++
++        // Каждый нейрон памяти имеет по аксону на каждый выходной нейрон.
++        for (Neuron memoryNeuron : memoryLayer.GetNeurons())
++        {
++            int recurrentFromOutput = 0;
++            for (Axon axon : memoryNeuron.GetAxons())
++            {
++                if (outputLayer.GetNeurons().contains(axon.GetSource()))
++                {
++                    recurrentFromOutput++;
++                }
++            }
++            assertEquals(outputLayer.GetSize(), recurrentFromOutput);
++        }
++    }
++
++    // Сеть с памятью меняет своё состояние между вызовами: при одинаковых
++    // сенсорах второй результат отличается от первого. Это и есть память —
++    // сеть без рекуррентных связей при тех же входах дала бы то же самое.
++    @Test
++    public void memoryMakesNetworkStateDependentOnPreviousCall()
++    {
++        NeuroNet net = BattleUnitCommon.CreateNeuroNetUnit();
++
++        double[] first = new double[10];
++        double[] second = new double[10];
++
++        setSameSensors(net);
++        net.CalcSignals();
++        for (int i = 0; i < 10; i++)
++        {
++            first[i] = net.GetLayers().get(4).GetNeurons().get(i).GetSignal();
++        }
++
++        setSameSensors(net);
++        net.CalcSignals();
++        for (int i = 0; i < 10; i++)
++        {
++            second[i] = net.GetLayers().get(4).GetNeurons().get(i).GetSignal();
++        }
++
++        boolean differs = false;
++        for (int i = 0; i < 10; i++)
++        {
++            if (Math.abs(first[i] - second[i]) > 1e-9)
++            {
++                differs = true;
++                break;
++            }
++        }
++        assertTrue(differs, "сеть с памятью при одинаковых входах должна зависеть от прошлого вызова");
++    }
++
++    // Обратная сторона того же контракта: обычная сеть без памяти при
++    // одинаковых входах обязана давать одинаковый результат. Если бы это было
++    // не так, тест выше ничего не доказывал бы.
++    @Test
++    public void networkWithoutMemoryIsStateless()
++    {
++        NeuroNet net = new NeuroNet();
++        net.GenerateAddLayer(2, true, false);
++        net.GenerateAddLayer(2, false, true);
++        net.Compile();
++        net.RandomWeights();
++
++        net.SetInputSignal(0, 0.5);
++        net.SetInputSignal(1, -0.25);
++        net.CalcSignals();
++        double first = net.GetLayers().get(1).GetNeurons().get(0).GetSignal();
++
++        net.SetInputSignal(0, 0.5);
++        net.SetInputSignal(1, -0.25);
++        net.CalcSignals();
++        double second = net.GetLayers().get(1).GetNeurons().get(0).GetSignal();
++
++        assertEquals(first, second, 1e-12);
++    }
++
++    private static void setSameSensors(NeuroNet net)
++    {
++        for (int i = 0; i < BattleUnitCommon.SENSOR_COUNT; i++)
++        {
++            net.SetInputSignal(i, 0.3);
++        }
++    }
++
++    // Копирование переносит и рекуррентную связь, иначе размножение юнита
++    // молча лишало бы потомка памяти.
++    @Test
++    public void copyPreservesRecurrentConnection()
++    {
++        NeuroNet parent = BattleUnitCommon.CreateNeuroNetUnit();
++        NeuroNet child = parent.Copy();
++
++        assertEquals(parent.GetLayers().size(), child.GetLayers().size());
++
++        Layer parentMemory = parent.GetLayers().get(3);
++        Layer childMemory = child.GetLayers().get(3);
++        Layer childOutput = child.GetLayers().get(4);
++
++        int recurrent = 0;
++        for (Axon axon : childMemory.GetNeurons().get(0).GetAxons())
++        {
++            if (childOutput.GetNeurons().contains(axon.GetSource()))
++            {
++                recurrent++;
++            }
++        }
++        assertEquals(childOutput.GetSize(), recurrent);
++        assertEquals(parentMemory.GetNeurons().get(0).GetAxons().size(),
++                childMemory.GetNeurons().get(0).GetAxons().size());
++    }
++
++    // Сохранение и загрузка обязаны сохранять память: раньше аксоны
++    // разрешались только в предыдущем слое, поэтому рекуррентная связь
++    // терялась бы при загрузке.
++    @Test
++    public void saveAndLoadPreservesRecurrentConnection() throws Exception
++    {
++        NeuroNet net = BattleUnitCommon.CreateNeuroNetUnit();
++        File tempFile = File.createTempFile("memory_net", ".xml");
++        tempFile.deleteOnExit();
++        net.SaveToFile(tempFile.getAbsolutePath());
++
++        NeuroNet loaded = new NeuroNet();
++        assertTrue(loaded.LoadFromFile(tempFile.getAbsolutePath()));
++
++        assertEquals(5, loaded.GetLayers().size());
++        Layer loadedMemory = loaded.GetLayers().get(3);
++        Layer loadedOutput = loaded.GetLayers().get(4);
++
++        int recurrent = 0;
++        for (Axon axon : loadedMemory.GetNeurons().get(0).GetAxons())
++        {
++            if (loadedOutput.GetNeurons().contains(axon.GetSource()))
++            {
++                recurrent++;
++            }
++        }
++        assertEquals(loadedOutput.GetSize(), recurrent,
++                "рекуррентная связь должна переживать сохранение");
++    }
++
+ }

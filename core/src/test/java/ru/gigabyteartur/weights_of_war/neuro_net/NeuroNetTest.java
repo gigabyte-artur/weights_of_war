@@ -362,11 +362,11 @@ public class NeuroNetTest
             net.Mutate(1.0, 2.0);   // намеренно большой шаг
         }
 
-        assertEquals(4, net.GetLayers().size());
+        assertEquals(5, net.GetLayers().size());
         // Размер входа — контракт с базовым набором сенсоров (SensorCount), а не литерал:
         // добавление сенсора меняет структуру сети, и это должно быть видно здесь.
         assertEquals(BattleUnitCommon.SENSOR_COUNT, net.GetLayers().get(0).GetSize());
-        assertEquals(10, net.GetLayers().get(3).GetSize());
+        assertEquals(10, net.GetLayers().get(4).GetSize());
 
         for (Layer l : net.GetLayers())
         {
@@ -395,4 +395,74 @@ public class NeuroNetTest
         assertEquals(before, parent.GetLayers().get(1).GetNeurons().get(0).GetAxons().get(0).GetWeight(), 1e-12);
     }
 
+
+    // Рекуррентная связь внутри ОДНОГО слоя обязана читать значение прошлого
+    // вызова, а не уже пересчитанное в этом проходе: иначе результат зависел бы
+    // от порядка нейронов внутри слоя. Проверяется на весах, выставленных вручную,
+    // поэтому тест не зависит от случайной инициализации.
+    @Test
+    public void sameLayerRecurrenceReadsPreviousCallValue()
+    {
+        NeuroNet net = new NeuroNet();
+        net.GenerateAddLayer(1, true, false);    // вход
+        net.GenerateAddLayer(2, false, false);   // слой A: A0, A1
+        net.GenerateAddLayer(1, false, true);    // выход
+
+        // Рекуррентная связь A0 -> A1 (источник в том же слое, что и цель)
+        // добавляется ДО компиляции: Compile один раз строит прямые связи и
+        // заодно фиксирует наличие рекуррентных.
+        Layer a = net.GetLayers().get(1);
+        Neuron a0 = a.GetNeurons().get(0);
+        Neuron a1 = a.GetNeurons().get(1);
+        a1.GenerateAddAxon(a0, 0);
+
+        net.Compile();
+
+        // Обнуляем всё и оставляем только два нужных пути:
+        // A0 = tanh(вход * 1), A1 = tanh(A0_прошлого * 1).
+        for (Layer layer : net.GetLayers())
+        {
+            for (Neuron neuron : layer.GetNeurons())
+            {
+                neuron.SetBias(0);
+                for (Axon axon : neuron.GetAxons())
+                {
+                    axon.SetWeight(0);
+                }
+            }
+        }
+        for (Axon axon : a0.GetAxons())
+        {
+            if (axon.GetSource() == net.GetLayers().get(0).GetNeurons().get(0))
+            {
+                axon.SetWeight(1.0);
+            }
+        }
+        boolean hasRecurrentAxon = false;
+        for (Axon axon : a1.GetAxons())
+        {
+            if (axon.GetSource() == a0)
+            {
+                axon.SetWeight(1.0);
+                hasRecurrentAxon = true;
+            }
+        }
+        assertTrue(hasRecurrentAxon, "рекуррентный аксон A0 -> A1 должен существовать");
+
+        net.SetInputSignal(0, 1.0);
+        net.CalcSignals();
+        double a0First = a0.GetSignal();
+        assertEquals(Math.tanh(1.0), a0First, 1e-9);
+
+        // Вход меняется на противоположный. A1 обязан увидеть ПРОШЛОЕ значение A0.
+        net.SetInputSignal(0, -1.0);
+        net.CalcSignals();
+        double a0Second = a0.GetSignal();
+        assertEquals(Math.tanh(-1.0), a0Second, 1e-9);
+
+        assertEquals(Math.tanh(a0First), a1.GetSignal(), 1e-9,
+                "A1 должен читать A0 прошлого вызова");
+        assertNotEquals(Math.tanh(a0Second), a1.GetSignal(),
+                "A1 не должен читать только что пересчитанный A0");
+    }
 }

@@ -142,7 +142,7 @@ public class BuildingCoreTest extends HeadlessGdxTest
         for (NeuroNet child : offspring)
         {
             assertNotNull(child);
-            assertEquals(4, child.GetLayers().size()); // 26 → 2×20 → 10
+            assertEquals(5, child.GetLayers().size()); // 26 → 2×20 → 10
             assertNotSame(coreNet, child);
             assertNotSame(topUnit.getNeuroNet(), child);
         }
@@ -441,7 +441,7 @@ public class BuildingCoreTest extends HeadlessGdxTest
         // поэтому он не обязан совпадать с чемпионом.
         NeuroNet immigrant = kids.get(kids.size() - 1);
         assertNotNull(immigrant);
-        assertEquals(4, immigrant.GetLayers().size());
+        assertEquals(5, immigrant.GetLayers().size());
     }
 
     @Test

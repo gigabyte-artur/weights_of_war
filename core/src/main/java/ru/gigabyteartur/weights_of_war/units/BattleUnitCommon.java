@@ -32,6 +32,10 @@ public abstract class BattleUnitCommon extends BattleObject
     public final static float DECISION_INTERVAL_SEC = 0.25f;   // Минимальный интервал между решениями юнита, игровых секунд.
     public final static int SENSOR_COUNT = 29;                 // Число входов сети: размер базового набора сенсоров.
 
+    // Число нейронов слоя памяти: он видит сенсоры текущего кадра и выход
+    // прошлого решения, то есть даёт сети состояние между вызовами.
+    public final static int MEMORY_COUNT = 8;
+
     // Срок жизни юнита: застой — это долг, а не приговор.
     //   * каждая волна без прогресса добавляет к долгу одну волну;
     //   * заработанный фит гасит долг: STAGNATION_FIT_PER_WAVE фита = одна волна;
@@ -728,7 +732,8 @@ public abstract class BattleUnitCommon extends BattleObject
     }
 
     // Формирует нейронную сеть юнита: входной слой 29 нейронов,
-    // 2 скрытых полносвязных слоя по 20 нейронов, выходной слой 10 нейронов.
+    // 2 скрытых полносвязных слоя по 20 нейронов, слой памяти 8 нейронов
+    // и выходной слой 10 нейронов.
     public static NeuroNet CreateNeuroNetUnit()
     {
         NeuroNet neuroNet = new NeuroNet();
@@ -746,6 +751,11 @@ public abstract class BattleUnitCommon extends BattleObject
 
         // Выходной слой.
         neuroNet.GenerateAddLayer(10, false, true);
+
+        // Слой памяти встаёт ПЕРЕД выходом: прямое питание от скрытых слоёв
+        // плюс рекуррентная связь от выхода (решение прошлого вызова).
+        neuroNet.AddMemoryLayer(MEMORY_COUNT);
+
         neuroNet.Compile();
         neuroNet.RandomWeights();
 

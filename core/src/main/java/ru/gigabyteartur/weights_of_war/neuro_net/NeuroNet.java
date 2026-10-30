@@ -3,6 +3,7 @@ package ru.gigabyteartur.weights_of_war.neuro_net;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.Random;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -18,7 +19,7 @@ import org.w3c.dom.NodeList;
 // Нейронная сеть.
 public class NeuroNet
 {
-    public final static int NEURO_NET_FORMAT_VERSION = 7;       // Версия формата сохранения нейронной сети. Поднимать при каждом изменении XML-формата.
+    public final static int NEURO_NET_FORMAT_VERSION = 8;       // Версия формата сохранения нейронной сети. Поднимать при каждом изменении XML-формата.
 
     private static NeuroNet logTarget = null;                   // Сеть, состояние которой нужно залогировать при следующем CalcSignals.
     private static String logFileName = null;                   // Имя файла для лога состояния сети.
@@ -27,6 +28,11 @@ public class NeuroNet
     private static ArrayList<String> logOutputNames = null;     // Имена команд (выходные нейроны).
 
     private ArrayList<Layer> Layers = new ArrayList<>();
+
+    // Есть ли в модели рекуррентная связь (источник не раньше цели). Считается
+    // один раз в Compile(): без рекуррентных связей CalcSignals не снимает
+    // снимок сигналов, поэтому обычные сети не платят за чужую механику.
+    private boolean recurrent_connections = false;
 
     // Добавляет в модель слой layer_in.
     public void AddLayer(Layer layer_in)
@@ -92,6 +98,38 @@ public class NeuroNet
                 }
             }
         }
+
+        this.recurrent_connections = DetectRecurrentConnections();
+    }
+
+    // Возвращает true, если хотя бы одна связь идёт от нейрона не в более раннем
+    // слое, чем её цель. Такие связи в CalcSignals читают прошлое значение.
+    private boolean DetectRecurrentConnections()
+    {
+        IdentityHashMap<Neuron, Integer> neuron_layer_index = new IdentityHashMap<>();
+        for (int i = 0; i < this.Layers.size(); i++)
+        {
+            for (Neuron neuron : this.Layers.get(i).GetNeurons())
+            {
+                neuron_layer_index.put(neuron, i);
+            }
+        }
+
+        for (int i = 0; i < this.Layers.size(); i++)
+        {
+            for (Neuron neuron : this.Layers.get(i).GetNeurons())
+            {
+                for (Axon axon : neuron.GetAxons())
+                {
+                    Integer source_layer_index = neuron_layer_index.get(axon.GetSource());
+                    if (source_layer_index == null || source_layer_index >= i)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
 //    // Обнуляет сигналы во всех слоях текущей сети.
@@ -137,6 +175,8 @@ public class NeuroNet
             }
         }
 
+        this.recurrent_connections = neuro_net_in.recurrent_connections;
+
         // Копируем связи (аксоны).
         for (Layer layer : neuro_net_in.GetLayers())
         {
@@ -179,9 +219,31 @@ public class NeuroNet
     }
 
     // Вычисляет сигналы в текущей нейронной сети по слоям.
+    //
+    // Прямые связи читают сигнал источника сразу после его пересчёта (как в
+    // обычном feedforward). Рекуррентная связь — та, у которой источник лежит в
+    // текущем или более позднем слое, — обязана читать значение ПРОШЛОГО вызова:
+    // иначе результат зависел бы от порядка нейронов внутри слоя, а не от модели.
+    // Поэтому до прохода снимается снимок сигналов всей сети.
     public void CalcSignals()
     {
         ArrayList<Layer> layers = this.GetLayers();
+
+        IdentityHashMap<Neuron, Double> previous_signals = null;
+        IdentityHashMap<Neuron, Integer> neuron_layer_index = null;
+        if (this.recurrent_connections)
+        {
+            previous_signals = new IdentityHashMap<>();
+            neuron_layer_index = new IdentityHashMap<>();
+            for (int i = 0; i < layers.size(); i++)
+            {
+                for (Neuron neuron : layers.get(i).GetNeurons())
+                {
+                    previous_signals.put(neuron, neuron.GetSignal());
+                    neuron_layer_index.put(neuron, i);
+                }
+            }
+        }
 
         for (int layerIdx = 1; layerIdx < layers.size(); layerIdx++)
         {
@@ -199,7 +261,7 @@ public class NeuroNet
                 {
                     Neuron source = axon.GetSource();
                     double weight = axon.GetWeight();
-                    sum += source.GetSignal() * weight;
+                    sum += ReadSourceSignal(source, layerIdx, previous_signals, neuron_layer_index) * weight;
                 }
 
                 // Применяем функцию активации tanh
@@ -217,6 +279,65 @@ public class NeuroNet
             logUnitName = null;
             logInputNames = null;
             logOutputNames = null;
+        }
+    }
+
+    // Возвращает сигнал источника с учётом направления связи: для рекуррентной
+    // связи (источник в текущем или более позднем слое) берётся значение прошлого
+    // вызова, для прямой — уже пересчитанное в этом проходе.
+    private double ReadSourceSignal(Neuron source_in, int target_layer_index_in,
+                                    IdentityHashMap<Neuron, Double> previous_signals_in,
+                                    IdentityHashMap<Neuron, Integer> neuron_layer_index_in)
+    {
+        if (previous_signals_in == null || neuron_layer_index_in == null)
+        {
+            return source_in.GetSignal();
+        }
+        Integer source_layer_index = neuron_layer_index_in.get(source_in);
+        if (source_layer_index == null)
+        {
+            // Источник вне этой сети — читаем как есть.
+            return source_in.GetSignal();
+        }
+        if (source_layer_index >= target_layer_index_in)
+        {
+            Double previous = previous_signals_in.get(source_in);
+            if (previous != null)
+            {
+                return previous;
+            }
+        }
+        return source_in.GetSignal();
+    }
+
+    // Вставляет перед УЖЕ ДОБАВЛЕННЫМ выходным слоем слой памяти и связывает
+    // его двумя путями:
+    // прямой связью от предыдущего слоя (её добавляет Compile) и рекуррентной
+    // связью от выходного слоя, благодаря которой слой памяти на следующем
+    // вызове видит решение, принятое на прошлом. Вызывать до Compile() и
+    // RandomWeights().
+    public void AddMemoryLayer(int size_in)
+    {
+        if (this.Layers.size() < 2 || size_in <= 0)
+        {
+            return;
+        }
+
+        Layer memory_layer = new DenseLayer();
+        memory_layer.GenerateLayer(size_in, false, false);
+        memory_layer.SetParentNeuroNet(this);
+
+        int output_layer_index = this.Layers.size() - 1;
+        this.Layers.add(output_layer_index, memory_layer);
+        Layer output_layer = this.Layers.get(output_layer_index + 1);
+
+        // Рекуррентная связь: выход прошлого вызова → слой памяти.
+        for (Neuron memory_neuron : memory_layer.GetNeurons())
+        {
+            for (Neuron output_neuron : output_layer.GetNeurons())
+            {
+                memory_neuron.GenerateAddAxon(output_neuron, 0);
+            }
         }
     }
 
@@ -480,6 +601,13 @@ public class NeuroNet
 
             Layer last_layer = null;
 
+            // Аксоны разрешаются после чтения всех слоёв: рекуррентная связь
+            // (например, выход -> слой памяти) смотрит в слой, который идёт
+            // ПОЗЖЕ цели, поэтому поиск источника только в предыдущем слое
+            // терял бы её при загрузке.
+            ArrayList<Axon> pending_axons = new ArrayList<>();
+            ArrayList<String> pending_axon_source_ids = new ArrayList<>();
+
             for (int i = 0; i < root_children.getLength(); i++)
             {
                 Node root_child = root_children.item(i);
@@ -594,12 +722,13 @@ public class NeuroNet
                                                     }
                                                 }
 
-                                                if (!source_neuron_id.equals("") && last_layer != null)
-                                                {
-                                                    Neuron source_neuron = last_layer.FindNeuronById(source_neuron_id);
-                                                    new_axon.Set(source_neuron, new_weight);
-                                                }
+                                                new_axon.SetWeight(new_weight);
                                                 new_neuron.AddAxon(new_axon);
+                                                if (!source_neuron_id.equals(""))
+                                                {
+                                                    pending_axons.add(new_axon);
+                                                    pending_axon_source_ids.add(source_neuron_id);
+                                                }
                                             }
                                         }
                                     }
@@ -616,6 +745,26 @@ public class NeuroNet
                     }
                 }
             }
+
+            // Связываем аксоны по идентификаторам нейронов всей сети.
+            HashMap<String, Neuron> neuron_by_id = new HashMap<>();
+            for (Layer curr_layer : this.Layers)
+            {
+                for (Neuron curr_neuron : curr_layer.GetNeurons())
+                {
+                    neuron_by_id.put(curr_neuron.GetId(), curr_neuron);
+                }
+            }
+            for (int i = 0; i < pending_axons.size(); i++)
+            {
+                Neuron source_neuron = neuron_by_id.get(pending_axon_source_ids.get(i));
+                if (source_neuron != null)
+                {
+                    pending_axons.get(i).Set(source_neuron, pending_axons.get(i).GetWeight());
+                }
+            }
+
+            this.recurrent_connections = DetectRecurrentConnections();
 
             return true;
         }

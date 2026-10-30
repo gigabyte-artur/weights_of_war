@@ -189,6 +189,7 @@ public class UnitPriest extends BattleUnitCommon
 
         // Выходной слой.
         neuroNet.GenerateAddLayer(11, false, true);
+        neuroNet.AddMemoryLayer(BattleUnitCommon.MEMORY_COUNT);
         neuroNet.Compile();
         neuroNet.RandomWeights();
 
