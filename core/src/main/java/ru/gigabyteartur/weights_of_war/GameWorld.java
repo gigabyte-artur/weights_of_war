@@ -43,6 +43,7 @@ public class GameWorld {
     private static boolean debugMode = false;                               // Режим отладки: отображение кругов обзора, линий атаки и лечения.
     private Fraction winnerFraction = null;                                 // Победившая фракция.
     private int maxGenerations = 0;                                        // Лимит поколений на партию (0 = без лимита).
+    private int lastStagnationGeneration = -1;                              // Поколение, на котором уже списывали долг застоя.
     private ArrayList<PlacedObject> units = new ArrayList<PlacedObject>();             // Список размещённых объектов.
     private FogOfWar fogOfWar = new FogOfWar();                             // Туман войны.
     private float fogTimer = 0f;                                            // Таймер обновления тумана войны.
@@ -357,6 +358,11 @@ public class GameWorld {
         for (int i = 0; i < units.size(); i++)
             units.get(i).Update(this);
 
+
+        // Застой списывается раз в поколение — у мира, который владеет временем, а не у
+        // каждого ядра. Раньше CheckUnitsStagnation звался из ProduceUnits всех четырёх
+        // ядер: одна генерация стоила четыре волны, и STAGNATION_WAVES=10 значило ~2.5.
+        AdvanceStagnationOncePerGeneration(GetMaxGeneration());
         // Завершение игры: остались здания только одной фракции, и прошла генерация второго поколения.
         if (CheckGameOver())
         {
@@ -1214,14 +1220,22 @@ public class GameWorld {
         return best;
     }
 
-    // Проверяет застой фита у всех живых юнитов (умирают при длительном застое).
-    public void CheckUnitsStagnation(int maxStaleWaves)
+    // Списывает одну волну застоя всем живым юнитам, но не чаще раза в поколение.
+    void AdvanceStagnationOncePerGeneration(int generation)
     {
+        if (generation == lastStagnationGeneration)
+        {
+            return;
+        }
+        lastStagnationGeneration = generation;
         for (PlacedObject object : units)
         {
             if (object instanceof BattleUnitCommon && !object.IsDead())
             {
-                ((BattleUnitCommon) object).CheckStagnation(maxStaleWaves);
+                ((BattleUnitCommon) object).AdvanceStagnation(
+                        BattleUnitCommon.STAGNATION_FIT_PER_WAVE,
+                        BattleUnitCommon.STAGNATION_BASE_WAVES,
+                        BattleUnitCommon.STAGNATION_MAX_EXTRA_WAVES);
             }
         }
     }

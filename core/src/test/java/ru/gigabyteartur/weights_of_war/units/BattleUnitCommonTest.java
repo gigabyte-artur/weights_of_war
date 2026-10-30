@@ -38,34 +38,69 @@ public class BattleUnitCommonTest
         assertTrue(layers.get(3).GetIsOutput());
     }
 
-    @Test
-    public void checkStagnationKillsAfterMaxUnchangedWaves()
+    // Общая настройка для тестов застоя: 50 фита оплачивают волну, база 4, потолок +8.
+    private static void advance(TestUnit unit)
     {
-        TestUnit unit = new TestUnit(0, 0);
-        unit.setFit(10);
-
-        // Первый вызов фиксирует lastFit = 10 (фит изменился), счётчик не растёт.
-        unit.CheckStagnation(3);
-        assertFalse(unit.IsDead());
-
-        unit.CheckStagnation(3); // staleWaves = 1
-        unit.CheckStagnation(3); // staleWaves = 2
-        assertFalse(unit.IsDead());
-        unit.CheckStagnation(3); // staleWaves = 3 → смерть
-        assertTrue(unit.IsDead());
+        unit.AdvanceStagnation(BattleUnitCommon.STAGNATION_FIT_PER_WAVE,
+                BattleUnitCommon.STAGNATION_BASE_WAVES,
+                BattleUnitCommon.STAGNATION_MAX_EXTRA_WAVES);
     }
 
     @Test
-    public void checkStagnationResetsWhenFitChanges()
+    public void stagnationKillsUnitThatNeverEarns()
     {
         TestUnit unit = new TestUnit(0, 0);
-        unit.setFit(10);
+        int base = BattleUnitCommon.STAGNATION_BASE_WAVES;
 
-        unit.CheckStagnation(2); // фиксирует lastFit = 10
-        unit.CheckStagnation(2); // staleWaves = 1
-        unit.setFit(20);
-        unit.CheckStagnation(2); // фит изменился → staleWaves = 0
-        assertFalse(unit.IsDead());
+        // База терпения: столько волн без единого фита юнит ещё жив.
+        for (int i = 0; i < base; i++)
+        {
+            advance(unit);
+        }
+        assertFalse(unit.IsDead(), "базовое терпение должно пережить " + base + " волн");
+
+        advance(unit);
+        assertTrue(unit.IsDead(), "волна сверх базы без прогресса убивает");
+    }
+
+    @Test
+    public void earnedFitBuysExtraPatience()
+    {
+        TestUnit idle = new TestUnit(0, 0);
+        TestUnit worker = new TestUnit(0, 0);
+        // 200 фита = 4 оплаченные волны банка.
+        worker.setFit(200);
+
+        int base = BattleUnitCommon.STAGNATION_BASE_WAVES;
+        // Первая волна фиксирует lastFit и начисляет банк; далее банк покрывает волны.
+        advance(idle);
+        advance(worker);
+        for (int i = 0; i < base + 2; i++)
+        {
+            advance(idle);
+            advance(worker);
+        }
+        assertTrue(idle.IsDead(), "без прогресса юнит умирает сразу после базового терпения");
+        assertFalse(worker.IsDead(), "заработанный фит оплачивает волны сверх базы");
+    }
+
+    @Test
+    public void creditBankIsCapped()
+    {
+        TestUnit rich = new TestUnit(0, 0);
+        rich.setFit(1_000_000);
+
+        // Первая волна начисляет банк и сама его тратит.
+        advance(rich);
+        // Банк ограничен: даже огромный запас не даёт больше базы плюс потолка.
+        int limit = BattleUnitCommon.STAGNATION_BASE_WAVES + BattleUnitCommon.STAGNATION_MAX_EXTRA_WAVES;
+        for (int i = 1; i < limit; i++)
+        {
+            advance(rich);
+        }
+        assertFalse(rich.IsDead(), "оплаченное потолком терпение должно быть доступно");
+        advance(rich);
+        assertTrue(rich.IsDead(), "за потолком банк не спасает");
     }
 
     @Test

@@ -32,7 +32,6 @@ public class BuildingCore extends BattleBuildingCommon
     public final static int SPAWN_RADIUS = 400;           // Радиус случайного спавна юнитов от ядра, px.
     public final static int CENTER_SPAWN_RADIUS = 500;    // Радиус спавна юнитов от центра карты, px.
     public final static double CENTER_SPAWN_RATE = 0.0;   // Доля юнитов, спавнящихся в центре карты.
-    public final static int STAGNATION_WAVES = 10;            // Волн без роста фита до смерти.
     public final static double ENEMY_GENE_TRANSFER_RATE = 0.03; // Вероятность переноса генов лучшего врага в следующее поколение.
     public final static double TOWER_DESTROYED_SKIP_RATE = 0.3;  // Вероятность пропуска генерации юнитов при разрушенной башне.
     public final static int LIMIT_BEST_UNITS = 5;                // Лимит лучших юнитов в пуле.
@@ -136,8 +135,6 @@ public class BuildingCore extends BattleBuildingCommon
                 NetScoutsFits.add(0);
             }
         }
-        // Юниты с неизменным фитом умирают.
-        world.CheckUnitsStagnation(STAGNATION_WAVES);
 
         // Шаг мутации подстраивается под прогресс: растёт лучший фит — шлифуем,
         // застой — расширяем поиск. Считаем по лучшему фиту среди всех типов.

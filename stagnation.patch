@@ -1,0 +1,327 @@
+From 85cae451f8c17487f89951f6192988dfb974e9bf Mon Sep 17 00:00:00 2001
+From: Ouroboros <311266734+ouroboros-agent@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 13:28:35 +0300
+Subject: [PATCH] =?UTF-8?q?=D0=AE=D0=BD=D0=B8=D1=82=D1=8B:=20=D0=B7=D0=B0?=
+ =?UTF-8?q?=D1=81=D1=82=D0=BE=D0=B9=20=D0=BA=D0=B0=D0=BA=20=D0=B4=D0=BE?=
+ =?UTF-8?q?=D0=BB=D0=B3,=20=D0=B0=20=D0=BD=D0=B5=20=D0=BF=D1=80=D0=B8?=
+ =?UTF-8?q?=D0=B3=D0=BE=D0=B2=D0=BE=D1=80?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Раньше юнит умирал, если его фит не менялся STAGNATION_WAVES проверок подряд.
+Это правило наказывало продуктивных и щадило бездельников:
+  * +1 фита за волну давало бессмертие, потому что фит «изменялся»;
+  * заработавший 500 фита получал столько же терпения, сколько простоявший.
+
+Теперь застой — долг в волнах: каждая волна без прогресса добавляет волну долга,
+а заработанный фит его гасит (50 фита = одна волна). Банк кредита ограничен
+восемью волнами, поэтому один удачный всплеск не покупает бессмертия.
+
+Второй дефект: проверку звал ProduceUnits каждого ядра, а ядер четыре — одна
+генерация стоила четыре волны, и STAGNATION_WAVES=10 значило ~2.5 генерации.
+Каденция перенесена в GameWorld.Update: одна волна на поколение, у владельца
+времени. У разрушенного ядра проверка раньше не шла вовсе.
+
+Co-authored-by: Ouroboros <311266734+ouroboros-agent@users.noreply.github.com>
+---
+ .../weights_of_war/GameWorld.java             | 20 +++++-
+ .../buildings/BuildingCore.java               |  3 -
+ .../units/BattleUnitCommon.java               | 53 ++++++++++----
+ .../weights_of_war/GameWorldTest.java         | 18 +++--
+ .../units/BattleUnitCommonTest.java           | 71 ++++++++++++++-----
+ 5 files changed, 122 insertions(+), 43 deletions(-)
+
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/GameWorld.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/GameWorld.java
+index 270b8fd..56b272c 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/GameWorld.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/GameWorld.java
+@@ -43,6 +43,7 @@ public class GameWorld {
+     private static boolean debugMode = false;                               // Режим отладки: отображение кругов обзора, линий атаки и лечения.
+     private Fraction winnerFraction = null;                                 // Победившая фракция.
+     private int maxGenerations = 0;                                        // Лимит поколений на партию (0 = без лимита).
++    private int lastStagnationGeneration = -1;                              // Поколение, на котором уже списывали долг застоя.
+     private ArrayList<PlacedObject> units = new ArrayList<PlacedObject>();             // Список размещённых объектов.
+     private FogOfWar fogOfWar = new FogOfWar();                             // Туман войны.
+     private float fogTimer = 0f;                                            // Таймер обновления тумана войны.
+@@ -357,6 +358,11 @@ public class GameWorld {
+         for (int i = 0; i < units.size(); i++)
+             units.get(i).Update(this);
+ 
++
++        // Застой списывается раз в поколение — у мира, который владеет временем, а не у
++        // каждого ядра. Раньше CheckUnitsStagnation звался из ProduceUnits всех четырёх
++        // ядер: одна генерация стоила четыре волны, и STAGNATION_WAVES=10 значило ~2.5.
++        AdvanceStagnationOncePerGeneration(GetMaxGeneration());
+         // Завершение игры: остались здания только одной фракции, и прошла генерация второго поколения.
+         if (CheckGameOver())
+         {
+@@ -1214,14 +1220,22 @@ public class GameWorld {
+         return best;
+     }
+ 
+-    // Проверяет застой фита у всех живых юнитов (умирают при длительном застое).
+-    public void CheckUnitsStagnation(int maxStaleWaves)
++    // Списывает одну волну застоя всем живым юнитам, но не чаще раза в поколение.
++    void AdvanceStagnationOncePerGeneration(int generation)
+     {
++        if (generation == lastStagnationGeneration)
++        {
++            return;
++        }
++        lastStagnationGeneration = generation;
+         for (PlacedObject object : units)
+         {
+             if (object instanceof BattleUnitCommon && !object.IsDead())
+             {
+-                ((BattleUnitCommon) object).CheckStagnation(maxStaleWaves);
++                ((BattleUnitCommon) object).AdvanceStagnation(
++                        BattleUnitCommon.STAGNATION_FIT_PER_WAVE,
++                        BattleUnitCommon.STAGNATION_BASE_WAVES,
++                        BattleUnitCommon.STAGNATION_MAX_EXTRA_WAVES);
+             }
+         }
+     }
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/buildings/BuildingCore.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/buildings/BuildingCore.java
+index e614b3f..c03c6b4 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/buildings/BuildingCore.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/buildings/BuildingCore.java
+@@ -32,7 +32,6 @@ public class BuildingCore extends BattleBuildingCommon
+     public final static int SPAWN_RADIUS = 400;           // Радиус случайного спавна юнитов от ядра, px.
+     public final static int CENTER_SPAWN_RADIUS = 500;    // Радиус спавна юнитов от центра карты, px.
+     public final static double CENTER_SPAWN_RATE = 0.0;   // Доля юнитов, спавнящихся в центре карты.
+-    public final static int STAGNATION_WAVES = 10;            // Волн без роста фита до смерти.
+     public final static double ENEMY_GENE_TRANSFER_RATE = 0.03; // Вероятность переноса генов лучшего врага в следующее поколение.
+     public final static double TOWER_DESTROYED_SKIP_RATE = 0.3;  // Вероятность пропуска генерации юнитов при разрушенной башне.
+     public final static int LIMIT_BEST_UNITS = 5;                // Лимит лучших юнитов в пуле.
+@@ -136,8 +135,6 @@ public class BuildingCore extends BattleBuildingCommon
+                 NetScoutsFits.add(0);
+             }
+         }
+-        // Юниты с неизменным фитом умирают.
+-        world.CheckUnitsStagnation(STAGNATION_WAVES);
+ 
+         // Шаг мутации подстраивается под прогресс: растёт лучший фит — шлифуем,
+         // застой — расширяем поиск. Считаем по лучшему фиту среди всех типов.
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommon.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommon.java
+index 6451f6d..348191c 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommon.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommon.java
+@@ -32,6 +32,17 @@ public abstract class BattleUnitCommon extends BattleObject
+     public final static float DECISION_INTERVAL_SEC = 0.25f;   // Минимальный интервал между решениями юнита, игровых секунд.
+     public final static int SENSOR_COUNT = 29;                 // Число входов сети: размер базового набора сенсоров.
+ 
++    // Срок жизни юнита: застой — это долг, а не приговор.
++    //   * каждая волна без прогресса добавляет к долгу одну волну;
++    //   * заработанный фит гасит долг: STAGNATION_FIT_PER_WAVE фита = одна волна;
++    //   * банк кредита ограничен STAGNATION_MAX_EXTRA_WAVES волнами, поэтому один
++    //     удачный всплеск не покупает бессмертия, а мелкая подработка (+1 фита за
++    //     волну) не спасает вовсе — раньше именно она давала бессмертие, потому что
++    //     фит «изменялся» и счётчик обнулялся.
++    public final static int STAGNATION_BASE_WAVES = 4;         // Базовое терпение до смерти, волн.
++    public final static int STAGNATION_FIT_PER_WAVE = 50;      // Сколько фита оплачивает одну волну застоя.
++    public final static int STAGNATION_MAX_EXTRA_WAVES = 8;    // Потолок банка кредита (лишние волны сверх базы).
++
+     public enum FitType {
+         DAMAGE_TO_UNITS,        // урон по юнитам.
+         DAMAGE_TO_BUILDINGS,    // урон по зданиям.
+@@ -52,8 +63,8 @@ public abstract class BattleUnitCommon extends BattleObject
+     private int GenerationNumber = 0;           // номер поколения юнита.
+     private NeuroNet neuroNet;                  // нейросеть юнита.
+     private int fit = 0;                        // Значение фитнесс-функции.
+-    private int lastFit = 0;                    // Фит на прошлой проверке.
+-    private int staleWaves = 0;                 // Сколько волн подряд фит не менялся.
++    private int lastFit = 0;                    // Фит на прошлой проверке (для расчёта прогресса за волну).
++    private float stagnationDebt = 0f;          // Долг застоя в волнах: волна без прогресса +1, заработанный фит его гасит.
+     private float stuck = 0f;                   // Накопленное время застревания, сек.
+     private float attacked = 0f;                // Сигнал «под атакой» (0..100, затухает со временем).
+     private float decisionCooldown = 0f;        // Сколько игровых секунд ещё нельзя принимать новое решение.
+@@ -670,32 +681,46 @@ public abstract class BattleUnitCommon extends BattleObject
+     {
+         fit = 0;
+         lastFit = 0;
+-        staleWaves = 0;
++        stagnationDebt = 0f;
+         targetObject = null;
+         attacked = 0f;
+         decisionCooldown = 0f;
+     }
+ 
+-    // Проверяет застой: если фит не менялся maxStaleWaves волн — юнит умирает.
+-    public void CheckStagnation(int maxStaleWaves)
++    // Продвигает долг застоя на одну волну. О смерти решает долг, а не факт
++    // «фит не изменился»: раньше юнит с постоянной мелкой подработкой жил вечно,
++    // а заработавший много получал ровно столько же терпения, сколько простоявший.
++    public void AdvanceStagnation(int fitPerWave, int baseWaves, int maxExtraWaves)
+     {
+-        if (fit == lastFit)
+-        {
+-            staleWaves++;
+-        }
+-        else
++        int progress = fit - lastFit;
++        lastFit = fit;
++        if (progress > 0 && fitPerWave > 0)
+         {
+-            staleWaves = 0;
++            // Заработанное гасит долг; банк кредита ограничен, иначе один удачный
++            // всплеск покупал бы бессмертие навсегда.
++            stagnationDebt -= progress / (float) fitPerWave;
++            if (stagnationDebt < -maxExtraWaves)
++            {
++                stagnationDebt = -maxExtraWaves;
++            }
+         }
+-        lastFit = fit;
++        stagnationDebt += 1f;
+ 
+-        if (staleWaves >= maxStaleWaves)
++        // Терпение — база плюс накопленный банк; банк не бесконечен.
++        float patience = baseWaves;
++        if (stagnationDebt > patience)
+         {
+             setHealth(0);
+-            staleWaves = 0;
++            stagnationDebt = 0f;
+         }
+     }
+ 
++    // Текущий долг застоя в волнах (для тестов и отладки).
++    public float getStagnationDebt()
++    {
++        return stagnationDebt;
++    }
++
+     // Возвращает true, если у объекта здоровье ниже критического порога (менее 20% от максимума).
+     public static boolean IsCriticallyWounded(BattleObject object)
+     {
+diff --git a/core/src/test/java/ru/gigabyteartur/weights_of_war/GameWorldTest.java b/core/src/test/java/ru/gigabyteartur/weights_of_war/GameWorldTest.java
+index 0a5270a..db13a59 100644
+--- a/core/src/test/java/ru/gigabyteartur/weights_of_war/GameWorldTest.java
++++ b/core/src/test/java/ru/gigabyteartur/weights_of_war/GameWorldTest.java
+@@ -282,17 +282,25 @@ public class GameWorldTest extends HeadlessGdxTest
+     }
+ 
+     @Test
+-    public void checkUnitsStagnationKillsStagnantUnits()
++    public void stagnationAdvancesOncePerGeneration()
+     {
++        // Одно ядро поколения 1 и юнит без прогресса: за одну генерацию долг растёт на одну волну.
++        BuildingCore core = new BuildingCore(0, 0);
++        core.setFraction(redFraction);
++        world.AddUnit(core);
++
+         TestUnit unit = new TestUnit(0, 0);
+         unit.setFraction(redFraction);
+-        unit.setFit(5);
+         world.AddUnit(unit);
+ 
+-        world.CheckUnitsStagnation(1); // фиксирует lastFit = 5
++        world.AdvanceStagnationOncePerGeneration(1); // поколение 1 — первая волна
++        assertEquals(1f, unit.getStagnationDebt(), 1e-4f);
++        world.AdvanceStagnationOncePerGeneration(1); // то же поколение — волна не повторяется
++        assertEquals(1f, unit.getStagnationDebt(), 1e-4f);
++
++        world.AdvanceStagnationOncePerGeneration(2);
++        assertEquals(2f, unit.getStagnationDebt(), 1e-4f);
+         assertFalse(unit.IsDead());
+-        world.CheckUnitsStagnation(1); // фит не изменился → смерть
+-        assertTrue(unit.IsDead());
+     }
+ 
+     @Test
+diff --git a/core/src/test/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommonTest.java b/core/src/test/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommonTest.java
+index d8aeb37..34fb6fe 100644
+--- a/core/src/test/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommonTest.java
++++ b/core/src/test/java/ru/gigabyteartur/weights_of_war/units/BattleUnitCommonTest.java
+@@ -38,34 +38,69 @@ public class BattleUnitCommonTest
+         assertTrue(layers.get(3).GetIsOutput());
+     }
+ 
++    // Общая настройка для тестов застоя: 50 фита оплачивают волну, база 4, потолок +8.
++    private static void advance(TestUnit unit)
++    {
++        unit.AdvanceStagnation(BattleUnitCommon.STAGNATION_FIT_PER_WAVE,
++                BattleUnitCommon.STAGNATION_BASE_WAVES,
++                BattleUnitCommon.STAGNATION_MAX_EXTRA_WAVES);
++    }
++
+     @Test
+-    public void checkStagnationKillsAfterMaxUnchangedWaves()
++    public void stagnationKillsUnitThatNeverEarns()
+     {
+         TestUnit unit = new TestUnit(0, 0);
+-        unit.setFit(10);
++        int base = BattleUnitCommon.STAGNATION_BASE_WAVES;
+ 
+-        // Первый вызов фиксирует lastFit = 10 (фит изменился), счётчик не растёт.
+-        unit.CheckStagnation(3);
+-        assertFalse(unit.IsDead());
++        // База терпения: столько волн без единого фита юнит ещё жив.
++        for (int i = 0; i < base; i++)
++        {
++            advance(unit);
++        }
++        assertFalse(unit.IsDead(), "базовое терпение должно пережить " + base + " волн");
+ 
+-        unit.CheckStagnation(3); // staleWaves = 1
+-        unit.CheckStagnation(3); // staleWaves = 2
+-        assertFalse(unit.IsDead());
+-        unit.CheckStagnation(3); // staleWaves = 3 → смерть
+-        assertTrue(unit.IsDead());
++        advance(unit);
++        assertTrue(unit.IsDead(), "волна сверх базы без прогресса убивает");
+     }
+ 
+     @Test
+-    public void checkStagnationResetsWhenFitChanges()
++    public void earnedFitBuysExtraPatience()
+     {
+-        TestUnit unit = new TestUnit(0, 0);
+-        unit.setFit(10);
++        TestUnit idle = new TestUnit(0, 0);
++        TestUnit worker = new TestUnit(0, 0);
++        // 200 фита = 4 оплаченные волны банка.
++        worker.setFit(200);
++
++        int base = BattleUnitCommon.STAGNATION_BASE_WAVES;
++        // Первая волна фиксирует lastFit и начисляет банк; далее банк покрывает волны.
++        advance(idle);
++        advance(worker);
++        for (int i = 0; i < base + 2; i++)
++        {
++            advance(idle);
++            advance(worker);
++        }
++        assertTrue(idle.IsDead(), "без прогресса юнит умирает сразу после базового терпения");
++        assertFalse(worker.IsDead(), "заработанный фит оплачивает волны сверх базы");
++    }
+ 
+-        unit.CheckStagnation(2); // фиксирует lastFit = 10
+-        unit.CheckStagnation(2); // staleWaves = 1
+-        unit.setFit(20);
+-        unit.CheckStagnation(2); // фит изменился → staleWaves = 0
+-        assertFalse(unit.IsDead());
++    @Test
++    public void creditBankIsCapped()
++    {
++        TestUnit rich = new TestUnit(0, 0);
++        rich.setFit(1_000_000);
++
++        // Первая волна начисляет банк и сама его тратит.
++        advance(rich);
++        // Банк ограничен: даже огромный запас не даёт больше базы плюс потолка.
++        int limit = BattleUnitCommon.STAGNATION_BASE_WAVES + BattleUnitCommon.STAGNATION_MAX_EXTRA_WAVES;
++        for (int i = 1; i < limit; i++)
++        {
++            advance(rich);
++        }
++        assertFalse(rich.IsDead(), "оплаченное потолком терпение должно быть доступно");
++        advance(rich);
++        assertTrue(rich.IsDead(), "за потолком банк не спасает");
+     }
+ 
+     @Test
+-- 
+2.56.0.windows.4
+

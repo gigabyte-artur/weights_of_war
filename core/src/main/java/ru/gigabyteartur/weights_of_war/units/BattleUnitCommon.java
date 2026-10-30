@@ -32,6 +32,17 @@ public abstract class BattleUnitCommon extends BattleObject
     public final static float DECISION_INTERVAL_SEC = 0.25f;   // Минимальный интервал между решениями юнита, игровых секунд.
     public final static int SENSOR_COUNT = 29;                 // Число входов сети: размер базового набора сенсоров.
 
+    // Срок жизни юнита: застой — это долг, а не приговор.
+    //   * каждая волна без прогресса добавляет к долгу одну волну;
+    //   * заработанный фит гасит долг: STAGNATION_FIT_PER_WAVE фита = одна волна;
+    //   * банк кредита ограничен STAGNATION_MAX_EXTRA_WAVES волнами, поэтому один
+    //     удачный всплеск не покупает бессмертия, а мелкая подработка (+1 фита за
+    //     волну) не спасает вовсе — раньше именно она давала бессмертие, потому что
+    //     фит «изменялся» и счётчик обнулялся.
+    public final static int STAGNATION_BASE_WAVES = 4;         // Базовое терпение до смерти, волн.
+    public final static int STAGNATION_FIT_PER_WAVE = 50;      // Сколько фита оплачивает одну волну застоя.
+    public final static int STAGNATION_MAX_EXTRA_WAVES = 8;    // Потолок банка кредита (лишние волны сверх базы).
+
     public enum FitType {
         DAMAGE_TO_UNITS,        // урон по юнитам.
         DAMAGE_TO_BUILDINGS,    // урон по зданиям.
@@ -52,8 +63,8 @@ public abstract class BattleUnitCommon extends BattleObject
     private int GenerationNumber = 0;           // номер поколения юнита.
     private NeuroNet neuroNet;                  // нейросеть юнита.
     private int fit = 0;                        // Значение фитнесс-функции.
-    private int lastFit = 0;                    // Фит на прошлой проверке.
-    private int staleWaves = 0;                 // Сколько волн подряд фит не менялся.
+    private int lastFit = 0;                    // Фит на прошлой проверке (для расчёта прогресса за волну).
+    private float stagnationDebt = 0f;          // Долг застоя в волнах: волна без прогресса +1, заработанный фит его гасит.
     private float stuck = 0f;                   // Накопленное время застревания, сек.
     private float attacked = 0f;                // Сигнал «под атакой» (0..100, затухает со временем).
     private float decisionCooldown = 0f;        // Сколько игровых секунд ещё нельзя принимать новое решение.
@@ -670,30 +681,44 @@ public abstract class BattleUnitCommon extends BattleObject
     {
         fit = 0;
         lastFit = 0;
-        staleWaves = 0;
+        stagnationDebt = 0f;
         targetObject = null;
         attacked = 0f;
         decisionCooldown = 0f;
     }
 
-    // Проверяет застой: если фит не менялся maxStaleWaves волн — юнит умирает.
-    public void CheckStagnation(int maxStaleWaves)
+    // Продвигает долг застоя на одну волну. О смерти решает долг, а не факт
+    // «фит не изменился»: раньше юнит с постоянной мелкой подработкой жил вечно,
+    // а заработавший много получал ровно столько же терпения, сколько простоявший.
+    public void AdvanceStagnation(int fitPerWave, int baseWaves, int maxExtraWaves)
     {
-        if (fit == lastFit)
-        {
-            staleWaves++;
-        }
-        else
-        {
-            staleWaves = 0;
-        }
+        int progress = fit - lastFit;
         lastFit = fit;
+        if (progress > 0 && fitPerWave > 0)
+        {
+            // Заработанное гасит долг; банк кредита ограничен, иначе один удачный
+            // всплеск покупал бы бессмертие навсегда.
+            stagnationDebt -= progress / (float) fitPerWave;
+            if (stagnationDebt < -maxExtraWaves)
+            {
+                stagnationDebt = -maxExtraWaves;
+            }
+        }
+        stagnationDebt += 1f;
 
-        if (staleWaves >= maxStaleWaves)
+        // Терпение — база плюс накопленный банк; банк не бесконечен.
+        float patience = baseWaves;
+        if (stagnationDebt > patience)
         {
             setHealth(0);
-            staleWaves = 0;
+            stagnationDebt = 0f;
         }
+    }
+
+    // Текущий долг застоя в волнах (для тестов и отладки).
+    public float getStagnationDebt()
+    {
+        return stagnationDebt;
     }
 
     // Возвращает true, если у объекта здоровье ниже критического порога (менее 20% от максимума).

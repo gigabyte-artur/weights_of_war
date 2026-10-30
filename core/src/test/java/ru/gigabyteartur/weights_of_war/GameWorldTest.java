@@ -282,17 +282,25 @@ public class GameWorldTest extends HeadlessGdxTest
     }
 
     @Test
-    public void checkUnitsStagnationKillsStagnantUnits()
+    public void stagnationAdvancesOncePerGeneration()
     {
+        // Одно ядро поколения 1 и юнит без прогресса: за одну генерацию долг растёт на одну волну.
+        BuildingCore core = new BuildingCore(0, 0);
+        core.setFraction(redFraction);
+        world.AddUnit(core);
+
         TestUnit unit = new TestUnit(0, 0);
         unit.setFraction(redFraction);
-        unit.setFit(5);
         world.AddUnit(unit);
 
-        world.CheckUnitsStagnation(1); // фиксирует lastFit = 5
+        world.AdvanceStagnationOncePerGeneration(1); // поколение 1 — первая волна
+        assertEquals(1f, unit.getStagnationDebt(), 1e-4f);
+        world.AdvanceStagnationOncePerGeneration(1); // то же поколение — волна не повторяется
+        assertEquals(1f, unit.getStagnationDebt(), 1e-4f);
+
+        world.AdvanceStagnationOncePerGeneration(2);
+        assertEquals(2f, unit.getStagnationDebt(), 1e-4f);
         assertFalse(unit.IsDead());
-        world.CheckUnitsStagnation(1); // фит не изменился → смерть
-        assertTrue(unit.IsDead());
     }
 
     @Test
