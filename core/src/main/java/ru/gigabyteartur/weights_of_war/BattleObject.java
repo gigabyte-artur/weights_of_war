@@ -97,10 +97,17 @@ public abstract class BattleObject extends PlacedObject
         return health <= 0;
     }
 
-    // Определяет, является ли другой объект врагом (другая фракция).
+    // Определяет, является ли другой объект врагом. Отношение задаёт команда (Team):
+    // фракции одной команды — союзники, без команды каждая сама за себя.
     public boolean IsEnemy(BattleObject object)
     {
-        return fraction != object.fraction;
+        return Team.AreEnemies(fraction, object.fraction);
+    }
+
+    // Союзник — объект той же команды (или та же фракция, если команды нет).
+    public boolean IsAlly(BattleObject object)
+    {
+        return !IsEnemy(object);
     }
 
     // Возвращает евклидово расстояние до другого боевого объекта.

@@ -109,9 +109,9 @@ public class FogOfWar
                 {
                     continue;
                 }
-                if (candidate.getFraction() == fraction)
+                if (Team.SameTeam(fraction, candidate.getFraction()))
                 {
-                    continue; // союзник уже добавлен в методе FindAllyObjects.
+                    continue; // союзник (та же команда) не враг и уже добавлен как союзник.
                 }
 
                 // Проверка расстояния (точный круг, а не прямоугольник по осям) — без извлечения корня.

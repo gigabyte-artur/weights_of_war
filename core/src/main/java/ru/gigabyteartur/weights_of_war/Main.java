@@ -53,7 +53,7 @@ public class Main extends ApplicationAdapter {
     public void create() {
         batch = new SpriteBatch();
         world = new GameWorld();
-        world.Init();
+        world.InitTeams();
         commandPanel = new CommandPanel();
 
         // Камера мира: OrthographicCamera + вьюпорт, занимающий только свободную от
@@ -221,6 +221,10 @@ public class Main extends ApplicationAdapter {
             if (world.GetWinner() == null)
             {
                 winnerText = "Ничья";
+            }
+            else if (world.GetWinnerTeam() != null)
+            {
+                winnerText = "Победила команда: " + world.GetWinnerTeam();
             }
             else
             {

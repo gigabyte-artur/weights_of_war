@@ -92,7 +92,7 @@ public class HeadlessGame extends ApplicationAdapter
     {
         System.out.println("Game " + (gamesFinished + 1) + " started: " + CurrentDateTime());
         world = new GameWorld();
-        world.Init();
+        world.InitTeams();
         world.setGameSpeed(HEADLESS_GAME_SPEED);
         world.setMaxGenerations(MAX_GENERATIONS);
     }
@@ -109,7 +109,10 @@ public class HeadlessGame extends ApplicationAdapter
         }
         else
         {
-            System.out.println("Game " + (gamesFinished + 1) + ": winner " + winner.getName() + ", generation " + GetWinnerGeneration(winner));
+            String team = world.GetWinnerTeam();
+            System.out.println("Game " + (gamesFinished + 1) + ": winner " + winner.getName()
+                    + (team != null ? " (team " + team + ")" : "")
+                    + ", generation " + GetWinnerGeneration(winner));
         }
     }
 

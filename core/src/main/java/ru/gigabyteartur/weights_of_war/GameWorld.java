@@ -22,11 +22,16 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.List;
 
 // Игровой мир: хранит и обновляет все размещённые объекты.
 public class GameWorld {
 
     public final static int COMMAND_PANEL_WIDTH = 300;                      // Ширина командной панели слева, px.
+    // Размер карты — одна точка правды. Владелец просил 8000×8000, но по умолчанию
+    // оставлено 4000×4000: спавн-диск (BuildingCore.CENTER_SPAWN_RADIUS=500px) и спираль
+    // FindFreePosition (по размеру экрана) не перенастроены под большую карту, а менять
+    // поведение по умолчанию нельзя. Для 8000×8000 достаточно поменять обе константы.
     public final static int MAP_WIDTH = 4000;                               // Ширина игрового мира (поле боя), мировые единицы.
     public final static int MAP_HEIGHT = 4000;                              // Высота игрового мира (поле боя), мировые единицы.
     public final static float FOG_UPDATE_INTERVAL = 0.1f;                   // Период обновления тумана войны, сек.
@@ -125,9 +130,62 @@ public class GameWorld {
         }
     }
 
+    // Описание ядра: имя фракции, команда (Team; null — без команды), цвет и положение
+    // (доли карты по X/Y для левого верхнего угла ядра).
+    public static class CoreSpec
+    {
+        public final String name;
+        public final Team team;
+        public final Color color;
+        public final float xFrac;
+        public final float yFrac;
+
+        public CoreSpec(String name, Team team, Color color, float xFrac, float yFrac)
+        {
+            this.name = name;
+            this.team = team;
+            this.color = color;
+            this.xFrac = xFrac;
+            this.yFrac = yFrac;
+        }
+    }
+
+    // 9 фракций / 3 команды. Green — одна фракция (scripted, не учится) в центре;
+    // A — четыре ядра по углам; B — четыре ядра в серединах сторон.
+    public final static List<CoreSpec> TEAM_CORE_SPECS = Arrays.asList(
+        new CoreSpec("Red", new Team("A"), Color.RED, 0f, 0f),
+        new CoreSpec("Blue", new Team("A"), Color.BLUE, 1f, 0f),
+        new CoreSpec("Yellow", new Team("A"), Color.YELLOW, 0f, 1f),
+        new CoreSpec("Magenta", new Team("A"), Color.MAGENTA, 1f, 1f),
+        new CoreSpec("Cyan", new Team("B"), Color.CYAN, 0.5f, 0f),
+        new CoreSpec("Orange", new Team("B"), Color.ORANGE, 1f, 0.5f),
+        new CoreSpec("White", new Team("B"), Color.WHITE, 0.5f, 1f),
+        new CoreSpec("Pink", new Team("B"), Color.PINK, 0f, 0.5f),
+        new CoreSpec("Green", new Team("Green"), Color.FOREST, 0.5f, 0.5f)
+    );
+
+    // Прежний мир из четырёх фракций без команд — обратная совместимость с тестами.
+    private final static List<CoreSpec> LEGACY_CORE_SPECS = Arrays.asList(
+        new CoreSpec("Red", null, Color.RED, 1f, 1f),
+        new CoreSpec("Blue", null, Color.BLUE, 0f, 0f),
+        new CoreSpec("Yellow", null, Color.YELLOW, 1f, 0f),
+        new CoreSpec("Green", null, Color.FOREST, 0f, 1f)
+    );
+
+    // Инициализация мира из четырёх фракций без команд (старое поведение).
     public void Init()
     {
-        // Инициализация.
+        InitWorld(LEGACY_CORE_SPECS);
+    }
+
+    // Инициализация мира с 9 ядрами и 3 командами (механизм команд).
+    public void InitTeams()
+    {
+        InitWorld(TEAM_CORE_SPECS);
+    }
+
+    private void InitWorld(List<CoreSpec> specs)
+    {
         // Границы мира: поле битвы — фиксированная карта MAP_WIDTH x MAP_HEIGHT, не привязанная к экрану.
         worldLeft = 0;
         worldBottom = 0;
@@ -135,42 +193,38 @@ public class GameWorld {
         worldTop = MAP_HEIGHT;
         // Скорость игры.
         setGameSpeed(2);
-        // Фракции.
-        Fraction redFraction = new Fraction("Red", Color.RED);
-        Fraction blueFraction = new Fraction("Blue", Color.BLUE);
-        Fraction yellowFraction = new Fraction("Yellow", Color.YELLOW);
-        Fraction greenFraction = new Fraction("Green", Color.FOREST);
-        // Ядро красной фракции в правом верхнем углу карты.
-        BuildingCore redCore = new BuildingCore(MAP_WIDTH - BuildingCore.DEFAULT_WIDTH, MAP_HEIGHT - BuildingCore.DEFAULT_HEIGHT);
-        redCore.setFraction(redFraction);
-        units.add(redCore);
-        // Ядро синей фракции в левом нижнем углу карты.
-        BuildingCore blueCore = new BuildingCore(0, 0);
-        blueCore.setFraction(blueFraction);
-        units.add(blueCore);
-        // Ядро желтой фракции в правом нижнем углу карты.
-        BuildingCore yellowCore = new BuildingCore(MAP_WIDTH - BuildingCore.DEFAULT_WIDTH, 0);
-        yellowCore.setFraction(yellowFraction);
-        units.add(yellowCore);
-        // Ядро зелёной фракции в левом верхнем углу карты.
-        BuildingCore greenCore = new BuildingCore(0, MAP_HEIGHT - BuildingCore.DEFAULT_HEIGHT);
-        greenCore.setFraction(greenFraction);
-        units.add(greenCore);
+
+        ArrayList<BuildingCore> cores = new ArrayList<BuildingCore>();
+        for (CoreSpec spec : specs)
+        {
+            Fraction fraction = new Fraction(spec.name, spec.color, spec.team);
+            BuildingCore core = new BuildingCore(CoreX(spec.xFrac), CoreY(spec.yFrac));
+            core.setFraction(fraction);
+            core.setScripted(spec.name.equals(SCRIPTED_FRACTION_NAME));
+            units.add(core);
+            cores.add(core);
+        }
         // Сторожевые башни: по одной на фракцию, по диагонали от ядра в сторону центра карты.
-        PlaceTower(redCore, redFraction);
-        PlaceTower(blueCore, blueFraction);
-        PlaceTower(yellowCore, yellowFraction);
-        PlaceTower(greenCore, greenFraction);
-        // Одно из четырёх ядер играет по вписанной стратегии — в обычном прогоне,
-        // а не только в тесте. Остальные три учатся как раньше.
-        redCore.setScripted(redFraction.getName().equals(SCRIPTED_FRACTION_NAME));
-        blueCore.setScripted(blueFraction.getName().equals(SCRIPTED_FRACTION_NAME));
-        yellowCore.setScripted(yellowFraction.getName().equals(SCRIPTED_FRACTION_NAME));
-        greenCore.setScripted(greenFraction.getName().equals(SCRIPTED_FRACTION_NAME));
+        for (BuildingCore core : cores)
+        {
+            PlaceTower(core, core.getFraction());
+        }
         // Загружаем сохранённые нейросети (если есть) во все ядра.
         LoadSavedNeuroNets();
         // Строим начальную сетку тумана войны (до первого обновления).
         UpdateFogOfWar();
+    }
+
+    // Мировая X-координата левого верхнего угла ядра по доле карты.
+    private int CoreX(float frac)
+    {
+        return (int) Math.round(frac * (MAP_WIDTH - BuildingCore.DEFAULT_WIDTH));
+    }
+
+    // Мировая Y-координата левого верхнего угла ядра по доле карты.
+    private int CoreY(float frac)
+    {
+        return (int) Math.round(frac * (MAP_HEIGHT - BuildingCore.DEFAULT_HEIGHT));
     }
 
     // Размещает сторожевую башню фракции по диагонали от ядра в сторону центра карты.
@@ -1278,13 +1332,14 @@ public class GameWorld {
         }
     }
 
-    // Лучшая по фиту сеть среди пулов чемпионов всех эволюционных ядер.
+    // Лучшая по фиту сеть среди пулов чемпионов обучающихся ядер команды-победителя.
     // Вписанные (scripted) ядра пропускаются: генов они не несут, и их сеть —
     // не прогресс обучения. Возвращает null, если пулов с сетями нет.
     private NeuroNet GetBestChampionNet(Class<? extends BattleUnitCommon> unitClass)
     {
         NeuroNet best = null;
         int bestFit = 0;
+        Fraction winner = FindWinnerFraction();
         for (PlacedObject object : units)
         {
             if (!(object instanceof BuildingCore))
@@ -1292,7 +1347,7 @@ public class GameWorld {
                 continue;
             }
             BuildingCore core = (BuildingCore) object;
-            if (core.isScripted())
+            if (core.isScripted() || !IsCoreOnWinningSide(core, winner))
             {
                 continue;
             }
@@ -1311,6 +1366,17 @@ public class GameWorld {
         return best;
     }
 
+    // Ядро — источник генов только если оно принадлежит стороне-победителю.
+    // Без победителя (нет живых ядер) или без команд донорами остаются все не-вписанные ядра.
+    private boolean IsCoreOnWinningSide(BuildingCore core, Fraction winner)
+    {
+        if (winner == null || winner.getTeam() == null)
+        {
+            return true;
+        }
+        return Team.SameTeam(winner, core.getFraction());
+    }
+
     // Возвращает живого юнита заданного класса с наибольшим фитом среди вражеских
     // фракций (отличных от ownFraction). Возвращает null, если таких нет.
     @SuppressWarnings("unchecked")
@@ -1323,7 +1389,9 @@ public class GameWorld {
             {
                 BattleObject battleObject = (BattleObject) object;
                 // Чужой вписанный юнит — не источник генов: у него их нет.
-                if (battleObject.getFraction() != null && battleObject.getFraction() != ownFraction
+                // Свой — та же команда (или та же фракция, если команды нет), а не только та же фракция.
+                if (battleObject.getFraction() != null && ownFraction != null
+                        && !Team.SameTeam(battleObject.getFraction(), ownFraction)
                         && !((BattleUnitCommon) object).IsScripted())
                 {
                     T candidate = (T) object;
@@ -1481,6 +1549,17 @@ public class GameWorld {
         return winnerFraction;
     }
 
+    // Возвращает команду-победителя (или null, если команд нет / победитель не определён).
+    public String GetWinnerTeam()
+    {
+        Fraction winner = GetWinner();
+        if (winner == null)
+        {
+            return null;
+        }
+        return winner.getTeamName();
+    }
+
     // Возвращает фракцию первого живого ядра (победителя), или null.
     private Fraction FindWinnerFraction()
     {
@@ -1494,22 +1573,23 @@ public class GameWorld {
         return null;
     }
 
-    // Возвращает true, если среди живых ядер осталась только одна фракция (или ядер нет).
-    private boolean IsOnlyOneFractionLeft()
+    // Возвращает true, если среди живых ядер осталась только одна команда (или ядер нет).
+    // Фракция без команды — сама себе сторона, поэтому для старых миров поведение прежнее.
+    boolean IsOnlyOneTeamLeft()
     {
-        Fraction firstFraction = null;
+        Object firstKey = null;
         boolean hasFirst = false;
         for (PlacedObject object : units)
         {
             if (object instanceof BuildingCore && !object.IsDead())
             {
-                Fraction f = ((BuildingCore) object).getFraction();
+                Object key = Team.KeyOf(((BuildingCore) object).getFraction());
                 if (!hasFirst)
                 {
-                    firstFraction = f;
+                    firstKey = key;
                     hasFirst = true;
                 }
-                else if (firstFraction != f)
+                else if (!java.util.Objects.equals(firstKey, key))
                 {
                     return false;
                 }
@@ -1597,10 +1677,10 @@ public class GameWorld {
         return bestFraction;
     }
 
-    // Проверяет, выполнены ли условия завершения игры.
+    // Проверяет, выполнены ли условия завершения игры (одна команда жива и прошло второе поколение).
     private boolean CheckGameOver()
     {
-        return IsOnlyOneFractionLeft() && IsSecondGenerationReached();
+        return IsOnlyOneTeamLeft() && IsSecondGenerationReached();
     }
 
     // Проверяет, что область (x, y, width, height) целиком находится внутри мира

@@ -1,0 +1,874 @@
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/BattleObject.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/BattleObject.java
+index 03d1686..745f137 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/BattleObject.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/BattleObject.java
+@@ -97,10 +97,21 @@ public abstract class BattleObject extends PlacedObject
+         return health <= 0;
+     }
+ 
+-    // Определяет, является ли другой объект врагом (другая фракция).
++    // Определяет, является ли другой объект врагом: другая команда (при team == null
++    // — другая фракция, как раньше). null-фракции сохраняют прежнее ссылочное поведение.
+     public boolean IsEnemy(BattleObject object)
+     {
+-        return fraction != object.fraction;
++        if (fraction == null || object.fraction == null)
++        {
++            return fraction != object.fraction;
++        }
++        return !fraction.SameTeam(object.fraction);
++    }
++
++    // Союзник — объект той же команды (или той же фракции при team == null).
++    public boolean IsAlly(BattleObject object)
++    {
++        return !IsEnemy(object);
+     }
+ 
+     // Возвращает евклидово расстояние до другого боевого объекта.
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/FogOfWar.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/FogOfWar.java
+index 094d8b5..b4db341 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/FogOfWar.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/FogOfWar.java
+@@ -109,9 +109,9 @@ public class FogOfWar
+                 {
+                     continue;
+                 }
+-                if (candidate.getFraction() == fraction)
++                if (candidate.getFraction() != null && fraction.SameTeam(candidate.getFraction()))
+                 {
+-                    continue; // союзник уже добавлен в методе FindAllyObjects.
++                    continue; // союзник (та же команда) не враг и уже добавлен как союзник.
+                 }
+ 
+                 // Проверка расстояния (точный круг, а не прямоугольник по осям) — без извлечения корня.
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/Fraction.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/Fraction.java
+index a9d6c9b..570ac70 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/Fraction.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/Fraction.java
+@@ -2,16 +2,23 @@ package ru.gigabyteartur.weights_of_war;
+ 
+ import com.badlogic.gdx.graphics.Color;
+ 
+-// Фракция объекта: имя и цвет.
++// Фракция объекта: имя, цвет и идентификатор команды (nullable).
+ public class Fraction
+ {
+     private Color color;
+     private String name;
++    private String team;    // null — фракция играет сама за себя (старое поведение).
+ 
+     public Fraction(String name, Color color)
++    {
++        this(name, color, null);
++    }
++
++    public Fraction(String name, Color color, String team)
+     {
+         this.name = name;
+         this.color = color;
++        this.team = team;
+     }
+ 
+     public String getName() {
+@@ -29,4 +36,32 @@ public class Fraction
+     public void setColor(Color color) {
+         this.color = color;
+     }
++
++    public String getTeam() {
++        return team;
++    }
++
++    public void setTeam(String team) {
++        this.team = team;
++    }
++
++    // Фракции в одной команде, если задан одинаковый team. Если хотя бы у одной
++    // team == null — союз только при тождественном равенстве объектов (ровно
++    // сегодняшнее поведение «каждый сам за себя»).
++    public boolean SameTeam(Fraction other)
++    {
++        if (other == null)
++        {
++            return false;
++        }
++        if (this == other)
++        {
++            return true;
++        }
++        if (team == null || other.team == null)
++        {
++            return false;
++        }
++        return team.equals(other.team);
++    }
+ }
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/GameWorld.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/GameWorld.java
+index 508f0c4..49306fc 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/GameWorld.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/GameWorld.java
+@@ -22,11 +22,16 @@ import java.util.ArrayList;
+ import java.util.Arrays;
+ import java.util.Comparator;
+ import java.util.Date;
++import java.util.List;
+ 
+ // Игровой мир: хранит и обновляет все размещённые объекты.
+ public class GameWorld {
+ 
+     public final static int COMMAND_PANEL_WIDTH = 300;                      // Ширина командной панели слева, px.
++    // Размер карты — одна точка правды. Владелец просил 8000×8000, но по умолчанию
++    // оставлено 4000×4000: спавн-диск (BuildingCore.CENTER_SPAWN_RADIUS=500px) и спираль
++    // FindFreePosition (по размеру экрана) не перенастроены под большую карту, а менять
++    // поведение по умолчанию нельзя. Для 8000×8000 достаточно поменять обе константы.
+     public final static int MAP_WIDTH = 4000;                               // Ширина игрового мира (поле боя), мировые единицы.
+     public final static int MAP_HEIGHT = 4000;                              // Высота игрового мира (поле боя), мировые единицы.
+     public final static float FOG_UPDATE_INTERVAL = 0.1f;                   // Период обновления тумана войны, сек.
+@@ -125,9 +130,62 @@ public class GameWorld {
+         }
+     }
+ 
++    // Описание ядра: имя фракции, команда (null — без команды), цвет и положение
++    // (доли карты по X/Y для левого верхнего угла ядра).
++    public static class CoreSpec
++    {
++        public final String name;
++        public final String team;
++        public final Color color;
++        public final float xFrac;
++        public final float yFrac;
++
++        public CoreSpec(String name, String team, Color color, float xFrac, float yFrac)
++        {
++            this.name = name;
++            this.team = team;
++            this.color = color;
++            this.xFrac = xFrac;
++            this.yFrac = yFrac;
++        }
++    }
++
++    // 9 фракций / 3 команды. Green — одна фракция (scripted, не учится) в центре;
++    // A — четыре ядра по углам; B — четыре ядра в серединах сторон.
++    public final static List<CoreSpec> TEAM_CORE_SPECS = Arrays.asList(
++        new CoreSpec("Red", "A", Color.RED, 0f, 0f),
++        new CoreSpec("Blue", "A", Color.BLUE, 1f, 0f),
++        new CoreSpec("Yellow", "A", Color.YELLOW, 0f, 1f),
++        new CoreSpec("Magenta", "A", Color.MAGENTA, 1f, 1f),
++        new CoreSpec("Cyan", "B", Color.CYAN, 0.5f, 0f),
++        new CoreSpec("Orange", "B", Color.ORANGE, 1f, 0.5f),
++        new CoreSpec("White", "B", Color.WHITE, 0.5f, 1f),
++        new CoreSpec("Pink", "B", Color.PINK, 0f, 0.5f),
++        new CoreSpec("Green", "Green", Color.FOREST, 0.5f, 0.5f)
++    );
++
++    // Прежний мир из четырёх фракций без команд — обратная совместимость с тестами.
++    private final static List<CoreSpec> LEGACY_CORE_SPECS = Arrays.asList(
++        new CoreSpec("Red", null, Color.RED, 1f, 1f),
++        new CoreSpec("Blue", null, Color.BLUE, 0f, 0f),
++        new CoreSpec("Yellow", null, Color.YELLOW, 1f, 0f),
++        new CoreSpec("Green", null, Color.FOREST, 0f, 1f)
++    );
++
++    // Инициализация мира из четырёх фракций без команд (старое поведение).
+     public void Init()
+     {
+-        // Инициализация.
++        InitWorld(LEGACY_CORE_SPECS);
++    }
++
++    // Инициализация мира с 9 ядрами и 3 командами (механизм команд).
++    public void InitTeams()
++    {
++        InitWorld(TEAM_CORE_SPECS);
++    }
++
++    private void InitWorld(List<CoreSpec> specs)
++    {
+         // Границы мира: поле битвы — фиксированная карта MAP_WIDTH x MAP_HEIGHT, не привязанная к экрану.
+         worldLeft = 0;
+         worldBottom = 0;
+@@ -135,44 +193,40 @@ public class GameWorld {
+         worldTop = MAP_HEIGHT;
+         // Скорость игры.
+         setGameSpeed(2);
+-        // Фракции.
+-        Fraction redFraction = new Fraction("Red", Color.RED);
+-        Fraction blueFraction = new Fraction("Blue", Color.BLUE);
+-        Fraction yellowFraction = new Fraction("Yellow", Color.YELLOW);
+-        Fraction greenFraction = new Fraction("Green", Color.FOREST);
+-        // Ядро красной фракции в правом верхнем углу карты.
+-        BuildingCore redCore = new BuildingCore(MAP_WIDTH - BuildingCore.DEFAULT_WIDTH, MAP_HEIGHT - BuildingCore.DEFAULT_HEIGHT);
+-        redCore.setFraction(redFraction);
+-        units.add(redCore);
+-        // Ядро синей фракции в левом нижнем углу карты.
+-        BuildingCore blueCore = new BuildingCore(0, 0);
+-        blueCore.setFraction(blueFraction);
+-        units.add(blueCore);
+-        // Ядро желтой фракции в правом нижнем углу карты.
+-        BuildingCore yellowCore = new BuildingCore(MAP_WIDTH - BuildingCore.DEFAULT_WIDTH, 0);
+-        yellowCore.setFraction(yellowFraction);
+-        units.add(yellowCore);
+-        // Ядро зелёной фракции в левом верхнем углу карты.
+-        BuildingCore greenCore = new BuildingCore(0, MAP_HEIGHT - BuildingCore.DEFAULT_HEIGHT);
+-        greenCore.setFraction(greenFraction);
+-        units.add(greenCore);
++
++        ArrayList<BuildingCore> cores = new ArrayList<BuildingCore>();
++        for (CoreSpec spec : specs)
++        {
++            Fraction fraction = new Fraction(spec.name, spec.color, spec.team);
++            BuildingCore core = new BuildingCore(CoreX(spec.xFrac), CoreY(spec.yFrac));
++            core.setFraction(fraction);
++            core.setScripted(spec.name.equals(SCRIPTED_FRACTION_NAME));
++            units.add(core);
++            cores.add(core);
++        }
+         // Сторожевые башни: по одной на фракцию, по диагонали от ядра в сторону центра карты.
+-        PlaceTower(redCore, redFraction);
+-        PlaceTower(blueCore, blueFraction);
+-        PlaceTower(yellowCore, yellowFraction);
+-        PlaceTower(greenCore, greenFraction);
+-        // Одно из четырёх ядер играет по вписанной стратегии — в обычном прогоне,
+-        // а не только в тесте. Остальные три учатся как раньше.
+-        redCore.setScripted(redFraction.getName().equals(SCRIPTED_FRACTION_NAME));
+-        blueCore.setScripted(blueFraction.getName().equals(SCRIPTED_FRACTION_NAME));
+-        yellowCore.setScripted(yellowFraction.getName().equals(SCRIPTED_FRACTION_NAME));
+-        greenCore.setScripted(greenFraction.getName().equals(SCRIPTED_FRACTION_NAME));
++        for (BuildingCore core : cores)
++        {
++            PlaceTower(core, core.getFraction());
++        }
+         // Загружаем сохранённые нейросети (если есть) во все ядра.
+         LoadSavedNeuroNets();
+         // Строим начальную сетку тумана войны (до первого обновления).
+         UpdateFogOfWar();
+     }
+ 
++    // Мировая X-координата левого верхнего угла ядра по доле карты.
++    private int CoreX(float frac)
++    {
++        return (int) Math.round(frac * (MAP_WIDTH - BuildingCore.DEFAULT_WIDTH));
++    }
++
++    // Мировая Y-координата левого верхнего угла ядра по доле карты.
++    private int CoreY(float frac)
++    {
++        return (int) Math.round(frac * (MAP_HEIGHT - BuildingCore.DEFAULT_HEIGHT));
++    }
++
+     // Размещает сторожевую башню фракции по диагонали от ядра в сторону центра карты.
+     private void PlaceTower(BuildingCore core, Fraction fraction)
+     {
+@@ -1278,13 +1332,14 @@ public class GameWorld {
+         }
+     }
+ 
+-    // Лучшая по фиту сеть среди пулов чемпионов всех эволюционных ядер.
++    // Лучшая по фиту сеть среди пулов чемпионов обучающихся ядер команды-победителя.
+     // Вписанные (scripted) ядра пропускаются: генов они не несут, и их сеть —
+     // не прогресс обучения. Возвращает null, если пулов с сетями нет.
+     private NeuroNet GetBestChampionNet(Class<? extends BattleUnitCommon> unitClass)
+     {
+         NeuroNet best = null;
+         int bestFit = 0;
++        Fraction winner = FindWinnerFraction();
+         for (PlacedObject object : units)
+         {
+             if (!(object instanceof BuildingCore))
+@@ -1292,7 +1347,7 @@ public class GameWorld {
+                 continue;
+             }
+             BuildingCore core = (BuildingCore) object;
+-            if (core.isScripted())
++            if (core.isScripted() || !IsCoreOnWinningSide(core, winner))
+             {
+                 continue;
+             }
+@@ -1311,6 +1366,17 @@ public class GameWorld {
+         return best;
+     }
+ 
++    // Ядро — источник генов только если оно принадлежит команде-победителю.
++    // Без победителя (нет живых ядер) или без команд донорами остаются все не-вписанные ядра.
++    private boolean IsCoreOnWinningSide(BuildingCore core, Fraction winner)
++    {
++        if (winner == null || winner.getTeam() == null)
++        {
++            return true;
++        }
++        return core.getFraction() != null && winner.getTeam().equals(core.getFraction().getTeam());
++    }
++
+     // Возвращает живого юнита заданного класса с наибольшим фитом среди вражеских
+     // фракций (отличных от ownFraction). Возвращает null, если таких нет.
+     @SuppressWarnings("unchecked")
+@@ -1323,7 +1389,9 @@ public class GameWorld {
+             {
+                 BattleObject battleObject = (BattleObject) object;
+                 // Чужой вписанный юнит — не источник генов: у него их нет.
+-                if (battleObject.getFraction() != null && battleObject.getFraction() != ownFraction
++                // Свой — та же команда (или та же фракция при team == null), а не только та же фракция.
++                if (battleObject.getFraction() != null && ownFraction != null
++                        && !battleObject.getFraction().SameTeam(ownFraction)
+                         && !((BattleUnitCommon) object).IsScripted())
+                 {
+                     T candidate = (T) object;
+@@ -1481,6 +1549,17 @@ public class GameWorld {
+         return winnerFraction;
+     }
+ 
++    // Возвращает команду-победителя (или null, если команд нет / победитель не определён).
++    public String GetWinnerTeam()
++    {
++        Fraction winner = GetWinner();
++        if (winner == null)
++        {
++            return null;
++        }
++        return winner.getTeam();
++    }
++
+     // Возвращает фракцию первого живого ядра (победителя), или null.
+     private Fraction FindWinnerFraction()
+     {
+@@ -1494,22 +1573,23 @@ public class GameWorld {
+         return null;
+     }
+ 
+-    // Возвращает true, если среди живых ядер осталась только одна фракция (или ядер нет).
+-    private boolean IsOnlyOneFractionLeft()
++    // Возвращает true, если среди живых ядер осталась только одна команда (или ядер нет).
++    // При team == null команда = фракция, поэтому поведение совпадает со старым.
++    boolean IsOnlyOneTeamLeft()
+     {
+-        Fraction firstFraction = null;
++        String firstTeam = null;
+         boolean hasFirst = false;
+         for (PlacedObject object : units)
+         {
+             if (object instanceof BuildingCore && !object.IsDead())
+             {
+-                Fraction f = ((BuildingCore) object).getFraction();
++                String team = TeamKey(((BuildingCore) object).getFraction());
+                 if (!hasFirst)
+                 {
+-                    firstFraction = f;
++                    firstTeam = team;
+                     hasFirst = true;
+                 }
+-                else if (firstFraction != f)
++                else if (!java.util.Objects.equals(firstTeam, team))
+                 {
+                     return false;
+                 }
+@@ -1518,6 +1598,20 @@ public class GameWorld {
+         return true;
+     }
+ 
++    // Ключ команды фракции: имя команды при team != null, иначе имя фракции (каждый сам за себя).
++    private String TeamKey(Fraction fraction)
++    {
++        if (fraction == null)
++        {
++            return null;
++        }
++        if (fraction.getTeam() != null)
++        {
++            return fraction.getTeam();
++        }
++        return "fraction:" + fraction.getName();
++    }
++
+     // Возвращает true, если хотя бы одно ядро произвело второе поколение.
+     private boolean IsSecondGenerationReached()
+     {
+@@ -1597,10 +1691,10 @@ public class GameWorld {
+         return bestFraction;
+     }
+ 
+-    // Проверяет, выполнены ли условия завершения игры.
++    // Проверяет, выполнены ли условия завершения игры (одна команда жива и прошло второе поколение).
+     private boolean CheckGameOver()
+     {
+-        return IsOnlyOneFractionLeft() && IsSecondGenerationReached();
++        return IsOnlyOneTeamLeft() && IsSecondGenerationReached();
+     }
+ 
+     // Проверяет, что область (x, y, width, height) целиком находится внутри мира
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/HeadlessGame.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/HeadlessGame.java
+index 4727cde..b2cc4d5 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/HeadlessGame.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/HeadlessGame.java
+@@ -92,7 +92,7 @@ public class HeadlessGame extends ApplicationAdapter
+     {
+         System.out.println("Game " + (gamesFinished + 1) + " started: " + CurrentDateTime());
+         world = new GameWorld();
+-        world.Init();
++        world.InitTeams();
+         world.setGameSpeed(HEADLESS_GAME_SPEED);
+         world.setMaxGenerations(MAX_GENERATIONS);
+     }
+@@ -109,7 +109,10 @@ public class HeadlessGame extends ApplicationAdapter
+         }
+         else
+         {
+-            System.out.println("Game " + (gamesFinished + 1) + ": winner " + winner.getName() + ", generation " + GetWinnerGeneration(winner));
++            String team = world.GetWinnerTeam();
++            System.out.println("Game " + (gamesFinished + 1) + ": winner " + winner.getName()
++                    + (team != null ? " (team " + team + ")" : "")
++                    + ", generation " + GetWinnerGeneration(winner));
+         }
+     }
+ 
+diff --git a/core/src/main/java/ru/gigabyteartur/weights_of_war/Main.java b/core/src/main/java/ru/gigabyteartur/weights_of_war/Main.java
+index 7b997a1..40de3e6 100644
+--- a/core/src/main/java/ru/gigabyteartur/weights_of_war/Main.java
++++ b/core/src/main/java/ru/gigabyteartur/weights_of_war/Main.java
+@@ -53,7 +53,7 @@ public class Main extends ApplicationAdapter {
+     public void create() {
+         batch = new SpriteBatch();
+         world = new GameWorld();
+-        world.Init();
++        world.InitTeams();
+         commandPanel = new CommandPanel();
+ 
+         // Камера мира: OrthographicCamera + вьюпорт, занимающий только свободную от
+@@ -222,6 +222,10 @@ public class Main extends ApplicationAdapter {
+             {
+                 winnerText = "Ничья";
+             }
++            else if (world.GetWinnerTeam() != null)
++            {
++                winnerText = "Победила команда: " + world.GetWinnerTeam();
++            }
+             else
+             {
+                 winnerText = "Победила фракция: " + world.GetWinner().getName();
+diff --git a/core/src/test/java/ru/gigabyteartur/weights_of_war/TeamsTest.java b/core/src/test/java/ru/gigabyteartur/weights_of_war/TeamsTest.java
+new file mode 100644
+index 0000000..13bdc9c
+--- /dev/null
++++ b/core/src/test/java/ru/gigabyteartur/weights_of_war/TeamsTest.java
+@@ -0,0 +1,420 @@
++package ru.gigabyteartur.weights_of_war;
++
++import com.badlogic.gdx.Gdx;
++import com.badlogic.gdx.Graphics;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import ru.gigabyteartur.weights_of_war.buildings.BuildingCore;
++import ru.gigabyteartur.weights_of_war.commands.CommandAttackTarget;
++import ru.gigabyteartur.weights_of_war.commands.CommandUnit;
++import ru.gigabyteartur.weights_of_war.neuro_net.Axon;
++import ru.gigabyteartur.weights_of_war.neuro_net.Layer;
++import ru.gigabyteartur.weights_of_war.neuro_net.NeuroNet;
++import ru.gigabyteartur.weights_of_war.neuro_net.Neuron;
++import ru.gigabyteartur.weights_of_war.testutil.TestUnit;
++import ru.gigabyteartur.weights_of_war.units.BattleUnitCommon;
++import ru.gigabyteartur.weights_of_war.units.UnitSwordman;
++
++import java.io.File;
++import java.lang.reflect.InvocationHandler;
++import java.lang.reflect.Method;
++import java.lang.reflect.Proxy;
++import java.nio.file.Files;
++import java.util.ArrayList;
++import java.util.HashSet;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++public class TeamsTest extends HeadlessGdxTest
++{
++    private File savesDir;
++
++    @BeforeEach
++    public void tempSaves() throws Exception
++    {
++        savesDir = Files.createTempDirectory("wow-teams-saves").toFile();
++        GameWorld.SetSavesDirectoryForTests(savesDir.getAbsolutePath());
++    }
++
++    @AfterEach
++    public void restoreSaves()
++    {
++        GameWorld.SetSavesDirectoryForTests(null);
++        if (savesDir != null)
++        {
++            File[] fs = savesDir.listFiles();
++            if (fs != null)
++            {
++                for (File f : fs)
++                {
++                    f.delete();
++                }
++            }
++            savesDir.delete();
++        }
++    }
++
++    // --- команда / IsEnemy ---
++
++    @Test
++    public void sameTeamAreAlliesDifferentTeamsAreEnemies()
++    {
++        Fraction a1 = new Fraction("Red", null, "A");
++        Fraction a2 = new Fraction("Blue", null, "A");
++        Fraction b1 = new Fraction("Cyan", null, "B");
++
++        TestUnit red = new TestUnit(0, 0);
++        red.setFraction(a1);
++        TestUnit blue = new TestUnit(1, 0);
++        blue.setFraction(a2);
++        TestUnit cyan = new TestUnit(2, 0);
++        cyan.setFraction(b1);
++
++        assertFalse(red.IsEnemy(blue), "фракции одной команды не враги");
++        assertTrue(red.IsAlly(blue), "фракции одной команды — союзники");
++        assertTrue(red.IsEnemy(cyan), "разные команды — враги");
++        assertFalse(red.IsAlly(cyan));
++    }
++
++    @Test
++    public void nullTeamKeepsLegacyEachForSelf()
++    {
++        Fraction red = new Fraction("Red", null);
++        Fraction red2 = new Fraction("Red", null); // другая ссылка, то же имя
++        Fraction blue = new Fraction("Blue", null);
++
++        TestUnit u = new TestUnit(0, 0);
++        u.setFraction(red);
++        TestUnit same = new TestUnit(1, 0);
++        same.setFraction(red);
++        TestUnit other = new TestUnit(2, 0);
++        other.setFraction(blue);
++        TestUnit sameNameOtherRef = new TestUnit(3, 0);
++        sameNameOtherRef.setFraction(red2);
++
++        assertFalse(u.IsEnemy(same), "та же фракция (ссылка) — союзник");
++        assertTrue(u.IsEnemy(other), "другая фракция — враг");
++        assertTrue(u.IsEnemy(sameNameOtherRef), "при team==null союз только по ссылке, как раньше");
++    }
++
++    // --- своё ядро ---
++
++    @Test
++    public void findOwnCoreReturnsOwnCoreNotAllyCore()
++    {
++        Fraction mine = new Fraction("Red", null, "A");
++        Fraction ally = new Fraction("Blue", null, "A");
++
++        GameWorld world = new GameWorld();
++        TestUnit unit = new TestUnit(0, 0);
++        unit.setFraction(mine);
++        world.AddUnit(unit);
++
++        BuildingCore myCore = new BuildingCore(100, 100);
++        myCore.setFraction(mine);
++        world.AddUnit(myCore);
++
++        BuildingCore allyCore = new BuildingCore(200, 100);
++        allyCore.setFraction(ally);
++        world.AddUnit(allyCore);
++
++        assertSame(myCore, world.FindOwnCore(unit), "юнит узнаёт ИМЕННО своё ядро, а не ядро союзника");
++    }
++
++    // --- условие победы по команде ---
++
++    @Test
++    public void winConditionFiresWhenOneTeamAlive()
++    {
++        GameWorld world = new GameWorld();
++        BuildingCore c1 = new BuildingCore(0, 0);
++        c1.setFraction(new Fraction("Red", null, "A"));
++        BuildingCore c2 = new BuildingCore(100, 0);
++        c2.setFraction(new Fraction("Blue", null, "A"));
++        world.AddUnit(c1);
++        world.AddUnit(c2);
++
++        // Живы ядра двух РАЗНЫХ фракций одной команды — победа по команде уже наступила.
++        assertTrue(world.IsOnlyOneTeamLeft());
++    }
++
++    @Test
++    public void winConditionDoesNotFireWhenMultipleTeamsAlive()
++    {
++        GameWorld world = new GameWorld();
++        BuildingCore c1 = new BuildingCore(0, 0);
++        c1.setFraction(new Fraction("Red", null, "A"));
++        BuildingCore c2 = new BuildingCore(100, 0);
++        c2.setFraction(new Fraction("Cyan", null, "B"));
++        world.AddUnit(c1);
++        world.AddUnit(c2);
++
++        assertFalse(world.IsOnlyOneTeamLeft(), "живы две команды — партия не окончена");
++    }
++
++    // --- InitTeams: 9 ядер / 3 команды ---
++
++    @Test
++    public void initTeamsCreatesNineCoresThreeTeamsGreenScripted()
++    {
++        GameWorld world = new GameWorld();
++        world.InitTeams();
++
++        int cores = 0;
++        HashSet<String> teams = new HashSet<String>();
++        boolean greenScripted = false;
++        int greenCores = 0;
++        for (PlacedObject object : world.GetUnits())
++        {
++            if (object instanceof BuildingCore && !object.IsDead())
++            {
++                cores++;
++                Fraction f = ((BuildingCore) object).getFraction();
++                if (f.getTeam() != null)
++                {
++                    teams.add(f.getTeam());
++                }
++                if ("Green".equals(f.getName()))
++                {
++                    greenCores++;
++                    greenScripted = ((BuildingCore) object).isScripted();
++                }
++            }
++        }
++        assertEquals(9, cores, "должно быть 9 ядер");
++        assertEquals(3, teams.size(), "должно быть 3 команды");
++        assertEquals(1, greenCores, "ровно одно ядро Green");
++        assertTrue(greenScripted, "Green играет по вписанной стратегии");
++    }
++
++    // --- сохранение: сети обучающихся ядер команды-победителя ---
++
++    @Test
++    public void saveKeepsWinningTeamNetsOnly() throws Exception
++    {
++        GameWorld world = new GameWorld();
++        Fraction a1f = new Fraction("Red", null, "A");
++        Fraction a2f = new Fraction("Blue", null, "A");
++        Fraction b1f = new Fraction("Cyan", null, "B");
++        BuildingCore a1 = new BuildingCore(0, 0);
++        a1.setFraction(a1f);
++        BuildingCore a2 = new BuildingCore(120, 0);
++        a2.setFraction(a2f);
++        BuildingCore b1 = new BuildingCore(240, 0);
++        b1.setFraction(b1f);
++        world.AddUnit(a1);
++        world.AddUnit(a2);
++        world.AddUnit(b1);
++
++        a1.ProduceUnits(world);
++        a2.ProduceUnits(world);
++        b1.ProduceUnits(world);
++
++        // Проигравшая команда B погибла; победитель — команда A (ядра a1/a2 живы).
++        b1.setHealth(0);
++        for (PlacedObject o : world.GetUnits())
++        {
++            if (o instanceof BattleUnitCommon && ((BattleObject) o).getFraction() == b1f)
++            {
++                ((BattleUnitCommon) o).setHealth(0);
++            }
++        }
++
++        NeuroNet a1net = a1.GetChampionNet(UnitSwordman.class);
++        NeuroNet b1net = b1.GetChampionNet(UnitSwordman.class);
++        assertNotNull(a1net);
++        assertNotNull(b1net);
++        assertNotEquals(weightsOf(a1net), weightsOf(b1net), "сети должны различаться, иначе тест ничего не проверяет");
++
++        world.SaveBestNetworks();
++
++        File file = new File(savesDir, "Swordman.xml");
++        assertTrue(file.exists(), "сохранение должно сработать");
++        NeuroNet loaded = new NeuroNet();
++        assertTrue(loaded.LoadFromFile(file.getAbsolutePath()));
++
++        assertNotEquals(weightsOf(b1net), weightsOf(loaded), "сеть проигравшей команды не должна сохраняться");
++
++        NeuroNet a2net = a2.GetChampionNet(UnitSwordman.class);
++        List<Double> loadedW = weightsOf(loaded);
++        assertTrue(loadedW.equals(weightsOf(a1net)) || (a2net != null && loadedW.equals(weightsOf(a2net))),
++                "в файл должна уйти сеть ядра команды-победителя");
++    }
++
++    // --- headless-прогон на 9 ядрах / 3 командах ---
++
++    @Test
++    public void headlessProbeNineCoresAlliesDoNotAttack()
++    {
++        Gdx.graphics = fixedGraphics(1f / 60f, 1280, 720);
++
++        GameWorld world = new GameWorld();
++        world.InitTeams();
++        world.setGameSpeed(10f);
++        world.setMaxGenerations(0);
++
++        int cores = countCores(world);
++        int teams = countTeams(world);
++        boolean greenScripted = greenIsScripted(world);
++
++        int frames = 0;
++        int maxGen = 0;
++        boolean sameTeamAttack = false;
++        while (maxGen < 8 && frames < 3600 && !world.IsGameOver())
++        {
++            world.Update();
++            frames++;
++            if (anySameTeamAttack(world))
++            {
++                sameTeamAttack = true;
++            }
++            maxGen = maxGeneration(world);
++        }
++
++        System.out.println("PROBE cores=" + cores + " teams=" + teams + " greenScripted=" + greenScripted
++                + " maxGen=" + maxGen + " frames=" + frames + " gameOver=" + world.IsGameOver()
++                + " sameTeamAttack=" + sameTeamAttack);
++
++        assertEquals(9, cores, "должно быть 9 ядер");
++        assertEquals(3, teams, "должно быть 3 команды");
++        assertTrue(greenScripted, "Green-ядро играет по правилам");
++        assertFalse(sameTeamAttack, "союзники одной команды не должны атаковать друг друга");
++        assertTrue(maxGen >= 2, "мир должен прожить хотя бы пару поколений");
++    }
++
++    // --- служебные методы ---
++
++    private static List<Double> weightsOf(NeuroNet net)
++    {
++        List<Double> out = new ArrayList<Double>();
++        for (Layer layer : net.GetLayers())
++        {
++            for (Neuron neuron : layer.GetNeurons())
++            {
++                out.add(neuron.GetBias());
++                for (Axon axon : neuron.GetAxons())
++                {
++                    out.add(axon.GetWeight());
++                }
++            }
++        }
++        return out;
++    }
++
++    private static int countCores(GameWorld world)
++    {
++        int n = 0;
++        for (PlacedObject o : world.GetUnits())
++        {
++            if (o instanceof BuildingCore && !o.IsDead())
++            {
++                n++;
++            }
++        }
++        return n;
++    }
++
++    private static int countTeams(GameWorld world)
++    {
++        HashSet<String> teams = new HashSet<String>();
++        for (PlacedObject o : world.GetUnits())
++        {
++            if (o instanceof BuildingCore && !o.IsDead())
++            {
++                Fraction f = ((BuildingCore) o).getFraction();
++                if (f.getTeam() != null)
++                {
++                    teams.add(f.getTeam());
++                }
++            }
++        }
++        return teams.size();
++    }
++
++    private static boolean greenIsScripted(GameWorld world)
++    {
++        for (PlacedObject o : world.GetUnits())
++        {
++            if (o instanceof BuildingCore && "Green".equals(((BuildingCore) o).getFraction().getName()))
++            {
++                return ((BuildingCore) o).isScripted();
++            }
++        }
++        return false;
++    }
++
++    private static int maxGeneration(GameWorld world)
++    {
++        int max = 0;
++        for (PlacedObject o : world.GetUnits())
++        {
++            if (o instanceof BuildingCore && !o.IsDead())
++            {
++                max = Math.max(max, ((BuildingCore) o).getGenerationNumber());
++            }
++        }
++        return max;
++    }
++
++    private static boolean anySameTeamAttack(GameWorld world)
++    {
++        for (PlacedObject o : world.GetUnits())
++        {
++            if (!(o instanceof BattleUnitCommon) || o.IsDead())
++            {
++                continue;
++            }
++            BattleUnitCommon unit = (BattleUnitCommon) o;
++            CommandUnit command = unit.GetCurrentCommand();
++            if (command instanceof CommandAttackTarget)
++            {
++                BattleObject target = ((CommandAttackTarget) command).getTarget();
++                if (target != null && unit.IsAlly(target))
++                {
++                    return true;
++                }
++            }
++        }
++        return false;
++    }
++
++    private static Graphics fixedGraphics(final float delta, final int w, final int h)
++    {
++        return (Graphics) Proxy.newProxyInstance(
++            Graphics.class.getClassLoader(),
++            new Class<?>[] { Graphics.class },
++            new InvocationHandler()
++            {
++                @Override
++                public Object invoke(Object proxy, Method method, Object[] args)
++                {
++                    String name = method.getName();
++                    if (name.equals("getWidth") || name.equals("getBackBufferWidth"))
++                    {
++                        return w;
++                    }
++                    if (name.equals("getHeight") || name.equals("getBackBufferHeight"))
++                    {
++                        return h;
++                    }
++                    if (name.equals("getDeltaTime"))
++                    {
++                        return delta;
++                    }
++                    Class<?> returnType = method.getReturnType();
++                    if (returnType == boolean.class) return false;
++                    if (returnType == int.class) return 0;
++                    if (returnType == float.class) return 0f;
++                    if (returnType == long.class) return 0L;
++                    if (returnType == double.class) return 0d;
++                    if (returnType == short.class) return (short) 0;
++                    if (returnType == byte.class) return (byte) 0;
++                    if (returnType == char.class) return (char) 0;
++                    return null;
++                }
++            }
++        );
++    }
++}
