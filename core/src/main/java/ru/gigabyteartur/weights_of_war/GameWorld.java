@@ -150,17 +150,17 @@ public class GameWorld {
         }
     }
 
-    // 9 фракций / 3 команды. Green — одна фракция (scripted, не учится) в центре;
-    // A — четыре ядра по углам; B — четыре ядра в серединах сторон.
+    // 7 фракций / 3 команды. Green — одна фракция (scripted, не учится) в центре;
+    // A — четыре ядра по углам; B — два ядра в серединах сторон (верх и низ).
+    // Фракции «в центре слева» (Pink) и «в центре справа» (Orange) убраны по просьбе
+    // владельца 2026-11-01: проверить численный перевес — A (4 ядра) против B (2).
     public final static List<CoreSpec> TEAM_CORE_SPECS = Arrays.asList(
         new CoreSpec("Red", new Team("A"), Color.RED, 0f, 0f),
         new CoreSpec("Blue", new Team("A"), Color.BLUE, 1f, 0f),
         new CoreSpec("Yellow", new Team("A"), Color.YELLOW, 0f, 1f),
         new CoreSpec("Magenta", new Team("A"), Color.MAGENTA, 1f, 1f),
         new CoreSpec("Cyan", new Team("B"), Color.CYAN, 0.5f, 0f),
-        new CoreSpec("Orange", new Team("B"), Color.ORANGE, 1f, 0.5f),
         new CoreSpec("White", new Team("B"), Color.WHITE, 0.5f, 1f),
-        new CoreSpec("Pink", new Team("B"), Color.PINK, 0f, 0.5f),
         new CoreSpec("Green", new Team("Green"), Color.FOREST, 0.5f, 0.5f)
     );
 
