@@ -194,10 +194,23 @@ public class GameWorld {
         units.add(tower);
     }
 
+    // Каталог сохранений, подменённый тестом (null — обычный ~/.WeightsOfWar/saves).
+    private static String savesDirectoryOverride = null;
+
     // Возвращает абсолютный путь к каталогу сохранений (общий для GUI и headless-режимов).
     private static String SavesDirectory()
     {
+        if (savesDirectoryOverride != null)
+        {
+            return savesDirectoryOverride;
+        }
         return System.getProperty("user.home") + File.separator + ".WeightsOfWar" + File.separator + "saves";
+    }
+
+    // Подменяет каталог сохранений: тесты и замеры не должны затирать прогресс игрока.
+    static void SetSavesDirectoryForTests(String path)
+    {
+        savesDirectoryOverride = path;
     }
 
     // Загружает сохранённые нейросети из каталога сохранений во все ядра фракций.
@@ -1241,11 +1254,61 @@ public class GameWorld {
     // Сохраняет нейросеть лучшего по фиту живого юнита заданного класса в файл.
     private <T extends BattleUnitCommon> void SaveBestNetwork(Class<T> unitClass, String fileName)
     {
-        T best = GetBestAliveUnit(unitClass);
-        if (best != null && best.getNeuroNet() != null)
+        // Донор — пул чемпионов ядра, а не лучший живой юнит класса.
+        //
+        // Раньше здесь стоял GetBestAliveUnit: файл класса обновлялся, только если к
+        // концу партии жив хоть один обучающийся юнит этого класса. Ядро гибнет на
+        // 10-16 поколении, партия этим же и кончается, поэтому в XML доезжала
+        // примерно половина обновлений (47 из 100 в замере на 20 партиях), а иногда
+        // не обновлялся ни один файл. Пул чемпионов ядра переживает и юнитов, и само
+        // ядро (ядра из units не удаляются), так что он и есть носитель прогресса.
+        NeuroNet champion = GetBestChampionNet(unitClass);
+        if (champion == null)
         {
-            best.getNeuroNet().SaveToFile(new File(SavesDirectory(), fileName).getPath());
+            // Мир без эволюционных ядер (или их пулы пусты) — прежний путь.
+            T best = GetBestAliveUnit(unitClass);
+            if (best != null)
+            {
+                champion = best.getNeuroNet();
+            }
         }
+        if (champion != null)
+        {
+            champion.SaveToFile(new File(SavesDirectory(), fileName).getPath());
+        }
+    }
+
+    // Лучшая по фиту сеть среди пулов чемпионов всех эволюционных ядер.
+    // Вписанные (scripted) ядра пропускаются: генов они не несут, и их сеть —
+    // не прогресс обучения. Возвращает null, если пулов с сетями нет.
+    private NeuroNet GetBestChampionNet(Class<? extends BattleUnitCommon> unitClass)
+    {
+        NeuroNet best = null;
+        int bestFit = 0;
+        for (PlacedObject object : units)
+        {
+            if (!(object instanceof BuildingCore))
+            {
+                continue;
+            }
+            BuildingCore core = (BuildingCore) object;
+            if (core.isScripted())
+            {
+                continue;
+            }
+            NeuroNet net = core.GetChampionNet(unitClass);
+            if (net == null)
+            {
+                continue;
+            }
+            int fit = core.GetChampionFit(unitClass);
+            if (best == null || fit > bestFit)
+            {
+                best = net;
+                bestFit = fit;
+            }
+        }
+        return best;
     }
 
     // Возвращает живого юнита заданного класса с наибольшим фитом среди вражеских

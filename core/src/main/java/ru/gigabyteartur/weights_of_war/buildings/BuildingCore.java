@@ -419,6 +419,70 @@ public class BuildingCore extends BattleBuildingCommon
 
     // Устанавливает нейросети для всех типов юнитов (для загрузки из сохранения).
     // Каждая переданная сеть становится первым (пока единственным) чемпионом своего пула.
+    // Пул сетей-чемпионов этого ядра для заданного класса юнитов.
+    private ArrayList<NeuroNet> ChampionNets(Class<? extends BattleUnitCommon> unitClass)
+    {
+        if (unitClass == UnitSwordman.class) return NetSwordmen;
+        if (unitClass == UnitArcher.class) return NetArchers;
+        if (unitClass == UnitShieldman.class) return NetShieldmen;
+        if (unitClass == UnitPriest.class) return NetPriests;
+        if (unitClass == UnitScout.class) return NetScouts;
+        return null;
+    }
+
+    // Фиты чемпионов того же пула (индексы совпадают с ChampionNets).
+    private ArrayList<Integer> ChampionFits(Class<? extends BattleUnitCommon> unitClass)
+    {
+        if (unitClass == UnitSwordman.class) return NetSwordmenFits;
+        if (unitClass == UnitArcher.class) return NetArchersFits;
+        if (unitClass == UnitShieldman.class) return NetShieldmenFits;
+        if (unitClass == UnitPriest.class) return NetPriestsFits;
+        if (unitClass == UnitScout.class) return NetScoutsFits;
+        return null;
+    }
+
+    // Индекс лучшего чемпиона в пуле класса (-1, если пула нет или он пуст).
+    // Сравнение по фиту: пул отсортирован ядром, но перепроверяем, чтобы результат
+    // не зависел от того, кто и в каком порядке его наполнял.
+    private int BestChampionIndex(Class<? extends BattleUnitCommon> unitClass)
+    {
+        ArrayList<Integer> fits = ChampionFits(unitClass);
+        if (fits == null || fits.isEmpty())
+        {
+            return -1;
+        }
+        int bestIdx = 0;
+        for (int i = 1; i < fits.size(); i++)
+        {
+            if (fits.get(i) > fits.get(bestIdx))
+            {
+                bestIdx = i;
+            }
+        }
+        return bestIdx;
+    }
+
+    // Лучшая сеть пула чемпионов этого ядра для класса юнитов (null — пул пуст).
+    // Пул живёт дольше юнитов и дольше самого ядра, поэтому он и есть носитель
+    // прогресса, который сохраняется между партиями.
+    public NeuroNet GetChampionNet(Class<? extends BattleUnitCommon> unitClass)
+    {
+        int idx = BestChampionIndex(unitClass);
+        if (idx < 0)
+        {
+            return null;
+        }
+        ArrayList<NeuroNet> nets = ChampionNets(unitClass);
+        return nets != null && idx < nets.size() ? nets.get(idx) : null;
+    }
+
+    // Фит лучшего чемпиона пула этого ядра для класса юнитов (0 — пул пуст).
+    public int GetChampionFit(Class<? extends BattleUnitCommon> unitClass)
+    {
+        int idx = BestChampionIndex(unitClass);
+        return idx < 0 ? 0 : ChampionFits(unitClass).get(idx);
+    }
+
     public void SetNeuroNets(NeuroNet swordman_in, NeuroNet archer_in, NeuroNet shieldman_in, NeuroNet priest_in, NeuroNet scout_in)
     {
         SetNetPool(NetSwordmen, NetSwordmenFits, swordman_in);
